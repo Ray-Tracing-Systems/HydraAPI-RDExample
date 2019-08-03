@@ -1,8 +1,8 @@
 #include <iostream>
 #include <vector>
 
-#include "../hydra_api/HydraAPI.h"
-#include "../hydra_api/HydraXMLHelpers.h"
+#include "HydraAPI.h"
+#include "HydraXMLHelpers.h"
 
 #include "input.h"
 #include "Camera.h"
@@ -382,25 +382,6 @@ void window_main_free_look(const wchar_t* a_libPath, const wchar_t* a_renderName
   //gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
   //glfwSwapInterval(0);
 
-/*
- * comment this for better performance when not debugging
- * */
-  if(!wcscmp(a_renderName, L"opengl32Forward") || !wcscmp(a_renderName, L"opengl32Deferred") || !wcscmp(a_renderName, L"opengl3Utility"))
-  {
-    GLint flags = 0;
-    glGetIntegerv(GL_CONTEXT_FLAGS, &flags);
-    if (flags & GL_CONTEXT_FLAG_DEBUG_BIT)
-    {
-      std::cout << "Initializing debug output" << std::endl;
-      glEnable(GL_DEBUG_OUTPUT);
-      glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-      //glDebugMessageCallback(glDebugOutput, nullptr);
-      //glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
-    }
-  }
-/*
- *
- * */
 
   glfwGetFramebufferSize(g_window, &g_width, &g_height);
   glfwSetInputMode(g_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
