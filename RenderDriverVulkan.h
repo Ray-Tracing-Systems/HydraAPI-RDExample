@@ -81,6 +81,10 @@ protected:
   void createSyncObjects();
   void recreateSwapChain();
   void cleanupSwapChain();
+  void createVertexBuffer();
+  void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+  void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+  void createIndexBuffer();
   QueueFamilyIndices GetQueueFamilyIndex(VkPhysicalDevice physicalDevice);
 
   std::wstring m_libPath;
@@ -125,6 +129,10 @@ protected:
   VkPipeline graphicsPipeline;
   VkCommandPool commandPool;
   size_t currentFrame = 0;
+  VkBuffer vertexBuffer;
+  VkDeviceMemory vertexBufferMemory;
+  VkBuffer indexBuffer;
+  VkDeviceMemory indexBufferMemory;
 };
 
 
