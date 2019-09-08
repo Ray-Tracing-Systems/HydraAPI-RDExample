@@ -39,6 +39,9 @@ using InitFuncType = void (*)();
 void window_main_free_look(const wchar_t* a_libPath, const wchar_t* a_renderName,
                            InitFuncType a_pInitFunc = nullptr, DrawFuncType a_pDrawFunc = nullptr);
 
+void window_main_free_look_vulkan(const wchar_t* a_libPath, const wchar_t* a_renderName,
+                           InitFuncType a_pInitFunc = nullptr, DrawFuncType a_pDrawFunc = nullptr);
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////// GLFW
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////// GLFW
 
@@ -91,6 +94,7 @@ void sig_handler(int signo)
 
 int main(int argc, const char** argv)
 {
+  registerAllVulkanDrivers();
   registerAllGL1Drivers();
 
   hrInfoCallback(&InfoCallBack);
@@ -139,7 +143,8 @@ int main(int argc, const char** argv)
   
   try
   {
-    window_main_free_look(L"data/testscenes/test_42", L"opengl1");
+    window_main_free_look_vulkan(L"data/testscenes/test_42", L"vulkan");
+    //window_main_free_look(L"data/testscenes/test_42", L"opengl1");
   }
   catch (std::runtime_error& e)
   {

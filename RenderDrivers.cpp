@@ -25,6 +25,31 @@ void registerAllGL1Drivers()
   registerGL1PlainDriver();
 }
 
+void registerVulkanPlainDriver()
+{
+  HRDriverInfo vulkan_info;
+  vulkan_info.supportHDRFrameBuffer = false;
+  vulkan_info.supportHDRTextures = false;
+  vulkan_info.supportMultiMaterialInstance = false;
+
+  vulkan_info.supportImageLoadFromInternalFormat = false;
+  vulkan_info.supportImageLoadFromExternalFormat = false;
+  vulkan_info.supportMeshLoadFromInternalFormat = false;
+  vulkan_info.supportLighting = false;
+
+  vulkan_info.memTotal = int64_t(8) * int64_t(1024 * 1024 * 1024);
+
+  vulkan_info.driverName = L"vulkan";
+  vulkan_info.createFunction = CreateVulkan_RenderDriver;
+
+  RenderDriverFactory::Register(L"vulkan", vulkan_info);
+}
+
+void registerAllVulkanDrivers()
+{
+  registerVulkanPlainDriver();
+}
+
 void printAllAvailableDrivers()
 {
   auto drivers = RenderDriverFactory::GetListOfRegisteredDrivers();

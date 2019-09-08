@@ -12,6 +12,7 @@ struct Input
   bool noWindow;
   bool exitStatus;
   bool enableOpenGL1;
+  bool enableVulkan;
 
   std::wstring inputLibraryPath;
   std::wstring inputRenderName;

@@ -3,6 +3,7 @@
 Input::Input()
 {
   enableOpenGL1    = true;
+  enableVulkan     = true;
   noWindow         = false;
   exitStatus       = false;
 
