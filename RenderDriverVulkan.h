@@ -87,6 +87,12 @@ protected:
   void createIndexBuffer();
   QueueFamilyIndices GetQueueFamilyIndex(VkPhysicalDevice physicalDevice);
 
+  void createDescriptorSetLayout();
+  void createUniformBuffers();
+  void updateUniformBuffer(uint32_t current_image);
+  void createDescriptorPool();
+  void createDescriptorSets();
+
   std::wstring m_libPath;
 
   // camera parameters
@@ -124,6 +130,7 @@ protected:
   std::vector<VkFramebuffer> swapChainFramebuffers;
   VkFormat swapChainImageFormat;
   VkExtent2D swapChainExtent;
+  VkDescriptorSetLayout descriptorSetLayout;
   VkPipelineLayout pipelineLayout;
   VkRenderPass renderPass;
   VkPipeline graphicsPipeline;
@@ -133,6 +140,10 @@ protected:
   VkDeviceMemory vertexBufferMemory;
   VkBuffer indexBuffer;
   VkDeviceMemory indexBufferMemory;
+  std::vector<VkBuffer> uniformBuffers;
+  std::vector<VkDeviceMemory> uniformBuffersMemory;
+  VkDescriptorPool descriptorPool;
+  std::vector<VkDescriptorSet> descriptorSets;
 };
 
 

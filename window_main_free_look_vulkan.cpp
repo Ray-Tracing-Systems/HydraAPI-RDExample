@@ -149,7 +149,6 @@ static void Update(float secondsElapsed)
   if(fieldOfView > 130.0f) fieldOfView = 130.0f;
   g_cam.fov = fieldOfView;
   g_scrollY = 0;
-
 }
 
 
