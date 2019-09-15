@@ -50,7 +50,7 @@ const bool enableValidationLayers = true;
 #endif
 
 struct Vertex {
-  HydraLiteMath::float2 pos;
+  HydraLiteMath::float3 pos;
   HydraLiteMath::float3 color;
 
   static VkVertexInputBindingDescription getBindingDescription() {
@@ -66,7 +66,7 @@ struct Vertex {
 
     attributeDescriptions[0].binding = 0;
     attributeDescriptions[0].location = 0;
-    attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
     attributeDescriptions[0].offset = offsetof(Vertex, pos);
 
     attributeDescriptions[1].binding = 0;
@@ -85,10 +85,10 @@ struct UniformBufferObject {
 };
 
 const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+    {{-0.5f, -0.5f, 0.f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, -0.5f, 0.f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f, 0.f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f, 0.5f, 0.f}, {1.0f, 1.0f, 1.0f}}
 };
 
 const std::vector<uint16_t> indices = {
@@ -335,7 +335,7 @@ void RD_Vulkan::createGraphicsPipeline() {
   rasterizationState.depthClampEnable = VK_FALSE;
   rasterizationState.lineWidth = 1;
   rasterizationState.rasterizerDiscardEnable = VK_FALSE;
-  rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
+  rasterizationState.cullMode = VK_CULL_MODE_NONE;
   rasterizationState.frontFace = VK_FRONT_FACE_CLOCKWISE;
   rasterizationState.depthBiasEnable = VK_FALSE;
   rasterizationState.depthBiasConstantFactor = 0.0f; // Optional
@@ -428,7 +428,7 @@ uint32_t findMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, Vk
   throw std::runtime_error("failed to find suitable memory type!");
 }
 
-void RD_Vulkan::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
+void RD_Vulkan::BufferManager::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
 {
   VkBufferCreateInfo bufferInfo = {};
   bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -436,69 +436,49 @@ void RD_Vulkan::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemo
   bufferInfo.usage = usage;
   bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-  VK_CHECK_RESULT(vkCreateBuffer(device, &bufferInfo, nullptr, &buffer));
+  VK_CHECK_RESULT(vkCreateBuffer(deviceRef, &bufferInfo, nullptr, &buffer));
 
   VkMemoryRequirements memRequirements;
-  vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+  vkGetBufferMemoryRequirements(deviceRef, buffer, &memRequirements);
 
   VkMemoryAllocateInfo allocInfo = {};
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = memRequirements.size;
-  allocInfo.memoryTypeIndex = findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties);
+  allocInfo.memoryTypeIndex = findMemoryType(physicalDeviceRef, memRequirements.memoryTypeBits, properties);
 
-  VK_CHECK_RESULT(vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory));
+  VK_CHECK_RESULT(vkAllocateMemory(deviceRef, &allocInfo, nullptr, &bufferMemory));
 
-  vkBindBufferMemory(device, buffer, bufferMemory, 0);
+  vkBindBufferMemory(deviceRef, buffer, bufferMemory, 0);
 }
 
-void RD_Vulkan::createVertexBuffer() {
+void RD_Vulkan::Mesh::createVertexBuffer(const std::vector<Vertex>& vertices) {
   VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
   VkBuffer stagingBuffer;
   VkDeviceMemory stagingBufferMemory;
-  createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+  BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
   void* data;
   vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
   memcpy(data, vertices.data(), (size_t)bufferSize);
   vkUnmapMemory(device, stagingBufferMemory);
 
-  createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+  BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
 
-  copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+  BufferManager::get().copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
   vkDestroyBuffer(device, stagingBuffer, nullptr);
   vkFreeMemory(device, stagingBufferMemory, nullptr);
 }
 
-void RD_Vulkan::createIndexBuffer() {
-  VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
-
-  VkBuffer stagingBuffer;
-  VkDeviceMemory stagingBufferMemory;
-  createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-  void* data;
-  vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-  memcpy(data, indices.data(), (size_t)bufferSize);
-  vkUnmapMemory(device, stagingBufferMemory);
-
-  createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
-
-  copyBuffer(stagingBuffer, indexBuffer, bufferSize);
-
-  vkDestroyBuffer(device, stagingBuffer, nullptr);
-  vkFreeMemory(device, stagingBufferMemory, nullptr);
-}
-
-void RD_Vulkan::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+void RD_Vulkan::BufferManager::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
   VkCommandBufferAllocateInfo allocInfo = {};
   allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
   allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  allocInfo.commandPool = commandPool;
+  allocInfo.commandPool = commandPoolRef;
   allocInfo.commandBufferCount = 1;
 
   VkCommandBuffer commandBuffer;
-  vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+  vkAllocateCommandBuffers(deviceRef, &allocInfo, &commandBuffer);
 
   VkCommandBufferBeginInfo beginInfo = {};
   beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -519,10 +499,10 @@ void RD_Vulkan::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize 
   submitInfo.commandBufferCount = 1;
   submitInfo.pCommandBuffers = &commandBuffer;
 
-  vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-  vkQueueWaitIdle(graphicsQueue);
+  vkQueueSubmit(queueRef, 1, &submitInfo, VK_NULL_HANDLE);
+  vkQueueWaitIdle(queueRef);
 
-  vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+  vkFreeCommandBuffers(deviceRef, commandPoolRef, 1, &commandBuffer);
 }
 
 // Find a memory in `memoryTypeBitsRequirement` that includes all of `requiredProperties`
@@ -827,6 +807,14 @@ void RD_Vulkan::createCommandPool() {
   VK_CHECK_RESULT(vkCreateCommandPool(device, &commandPoolCreateInfo, nullptr, &commandPool));
 }
 
+void RD_Vulkan::Mesh::bind(VkCommandBuffer command_buffer) {
+  VkBuffer vertexBuffers[] = { vertexBuffer };
+  VkDeviceSize offsets[] = { 0 };
+  vkCmdBindVertexBuffers(command_buffer, 0, 1, vertexBuffers, offsets);
+
+  vkCmdBindIndexBuffer(command_buffer, indexBuffer, 0, (indicesCount >= 1 << 16) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
+}
+
 void RD_Vulkan::createCommandBuffers() {
   commandBuffers.resize(swapChainImages.size());
 
@@ -860,15 +848,13 @@ void RD_Vulkan::createCommandBuffers() {
 
     vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-    VkBuffer vertexBuffers[] = { vertexBuffer };
-    VkDeviceSize offsets[] = { 0 };
-    vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+    for (auto it = meshes.begin(); it != meshes.end(); ++it)
+    {
+      it->second->bind(commandBuffers[i]);
+      vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[i], 0, nullptr);
 
-    vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-
-    vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[i], 0, nullptr);
-
-    vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+      vkCmdDrawIndexed(commandBuffers[i], it->second->getIndicesCount(), 1, 0, 0, 0);
+    }
     vkCmdEndRenderPass(commandBuffers[i]);
     VK_CHECK_RESULT(vkEndCommandBuffer(commandBuffers[i]));
   }
@@ -951,7 +937,7 @@ void RD_Vulkan::createUniformBuffers() {
   uniformBuffersMemory.resize(swapChainImages.size());
 
   for (size_t i = 0; i < swapChainImages.size(); i++) {
-    createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
+    BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
   }
 }
 
@@ -1014,8 +1000,7 @@ RD_Vulkan::RD_Vulkan()
   createGraphicsPipeline();
   createFramebuffers();
   createCommandPool();
-  createVertexBuffer();
-  createIndexBuffer();
+  BufferManager::get().init(physicalDevice, device, commandPool, graphicsQueue);
   createUniformBuffers();
   createDescriptorPool();
   createDescriptorSets();
@@ -1041,11 +1026,7 @@ RD_Vulkan::~RD_Vulkan()
 
   vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
-  vkDestroyBuffer(device, indexBuffer, nullptr);
-  vkFreeMemory(device, indexBufferMemory, nullptr);
-
-  vkDestroyBuffer(device, vertexBuffer, nullptr);
-  vkFreeMemory(device, vertexBufferMemory, nullptr);
+  meshes.clear();
 
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -1264,6 +1245,31 @@ bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HR
 
   bool invalidMaterial = m_diffTexId.empty();
 
+  std::vector<Vertex> vertices;
+  for (int i = 0; i < a_input.vertNum; ++i) {
+    float3 pos = { a_input.pos4f[4 * i], a_input.pos4f[4 * i + 1], a_input.pos4f[4 * i + 2] };
+    float3 color = { a_input.norm4f[4 * i], a_input.norm4f[4 * i + 1], a_input.norm4f[4 * i + 2] };
+    Vertex vertex = { pos, color * 0.5f + 0.5f };
+    vertices.push_back(vertex);
+  }
+
+  meshes[a_meshId] = std::make_unique<Mesh>(device);
+  if (a_input.triNum * 3 >= 1 << 16) {
+    std::vector<uint32_t> indices;
+    for (int i = 0; i < a_input.triNum * 3; ++i) {
+      indices.push_back(a_input.indices[i]);
+    }
+    meshes[a_meshId]->createMesh(vertices, indices);
+  }
+  else {
+    std::vector<uint16_t> indices;
+    for (int i = 0; i < a_input.triNum * 3; ++i) {
+      indices.push_back(a_input.indices[i]);
+    }
+    meshes[a_meshId]->createMesh(vertices, indices);
+  }
+  createCommandBuffers();
+
   for (int32_t batchId = 0; batchId < a_listSize; batchId++)
   {
     HRBatchInfo batch = a_batchList[batchId];
@@ -1363,6 +1369,7 @@ void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
 
   const float aspect = float(m_width) / float(m_height);
   ubo.proj = projectionMatrixTransposed(camFov, aspect, camNearPlane, camFarPlane);
+  ubo.proj.M(1, 1) *= -1.f;
 
   void* data;
   vkMapMemory(device, uniformBuffersMemory[current_image], 0, sizeof(ubo), 0, &data);

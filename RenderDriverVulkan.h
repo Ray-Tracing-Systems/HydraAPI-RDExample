@@ -9,6 +9,8 @@
 #include <vulkan/vulkan.h>
 
 #include <array>
+#include <map>
+#include <memory>
 #include <vector>
 #include <string>
 #include <sstream>
@@ -20,6 +22,8 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+struct Vertex;
 
 struct RD_Vulkan : public IHRRenderDriver
 {
@@ -67,6 +71,83 @@ protected:
     uint32_t presentFamily;
   };
 
+  class Mesh {
+    VkBuffer vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
+    VkBuffer indexBuffer;
+    VkDeviceMemory indexBufferMemory;
+    VkDevice device;
+    uint32_t indicesCount;
+
+    void createVertexBuffer(const std::vector<Vertex>& vertices);
+    template <typename T>
+    void createIndexBuffer(const std::vector<T>& indices) {
+      VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+      VkBuffer stagingBuffer;
+      VkDeviceMemory stagingBufferMemory;
+      BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+      void* data;
+      vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+      memcpy(data, indices.data(), (size_t)bufferSize);
+      vkUnmapMemory(device, stagingBufferMemory);
+
+      BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
+
+      BufferManager::get().copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+
+      vkDestroyBuffer(device, stagingBuffer, nullptr);
+      vkFreeMemory(device, stagingBufferMemory, nullptr);
+    }
+  public:
+    Mesh(VkDevice dev) : device(dev) {}
+
+    ~Mesh() {
+      vkDestroyBuffer(device, indexBuffer, nullptr);
+      vkFreeMemory(device, indexBufferMemory, nullptr);
+
+      vkDestroyBuffer(device, vertexBuffer, nullptr);
+      vkFreeMemory(device, vertexBufferMemory, nullptr);
+    }
+
+    template <typename T>
+    void createMesh(const std::vector<Vertex>& vertices, const std::vector<T>& indices) {
+      createVertexBuffer(vertices);
+      createIndexBuffer(indices);
+      indicesCount = static_cast<uint32_t>(indices.size());
+    }
+
+    void bind(VkCommandBuffer command_buffer);
+
+    uint32_t getIndicesCount() const {
+      return indicesCount;
+    }
+  };
+
+  class BufferManager {
+    VkPhysicalDevice physicalDeviceRef;
+    VkDevice deviceRef;
+    VkCommandPool commandPoolRef;
+    VkQueue queueRef;
+  public:
+    void init(VkPhysicalDevice physicalDevice, VkDevice device, VkCommandPool commandPool, VkQueue queue) {
+      physicalDeviceRef = physicalDevice;
+      deviceRef = device;
+      commandPoolRef = commandPool;
+      queueRef = queue;
+    }
+    static BufferManager& get() {
+      static BufferManager instance;
+      return instance;
+    }
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+    void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+  private:
+    BufferManager() {}
+    ~BufferManager() {}
+  };
+
   void createInstance();
   void pickPhysicalDevice();
   void createLogicalDevice();
@@ -81,10 +162,6 @@ protected:
   void createSyncObjects();
   void recreateSwapChain();
   void cleanupSwapChain();
-  void createVertexBuffer();
-  void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
-  void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
-  void createIndexBuffer();
   QueueFamilyIndices GetQueueFamilyIndex(VkPhysicalDevice physicalDevice);
 
   void createDescriptorSetLayout();
@@ -136,10 +213,8 @@ protected:
   VkPipeline graphicsPipeline;
   VkCommandPool commandPool;
   size_t currentFrame = 0;
-  VkBuffer vertexBuffer;
-  VkDeviceMemory vertexBufferMemory;
-  VkBuffer indexBuffer;
-  VkDeviceMemory indexBufferMemory;
+  //std::unique_ptr<Mesh> defaultMesh;
+  std::map<int, std::unique_ptr<Mesh>> meshes;
   std::vector<VkBuffer> uniformBuffers;
   std::vector<VkDeviceMemory> uniformBuffersMemory;
   VkDescriptorPool descriptorPool;
