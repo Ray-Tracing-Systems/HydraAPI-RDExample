@@ -181,6 +181,7 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="mesh_utils.cpp" />
     <ClCompile Include="RenderDriverOpenGL1.cpp" />
+    <ClCompile Include="RenderDriverOpenGL1Debug.cpp" />
     <ClCompile Include="RenderDrivers.cpp" />
     <ClCompile Include="Timer.cpp" />
     <ClCompile Include="window_main_free_look_gl.cpp" />

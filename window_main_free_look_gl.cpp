@@ -187,7 +187,7 @@ static void Draw(void)
     settingsNode.force_child(L"draw_solid").text()    = 1;
     settingsNode.force_child(L"draw_wire").text()     = 1;
     settingsNode.force_child(L"draw_normals").text()  = 1;
-    settingsNode.force_child(L"draw_tangents").text() = 0;
+    settingsNode.force_child(L"draw_tangents").text() = 1;
     settingsNode.force_child(L"draw_axis").text()     = 0;
     settingsNode.force_child(L"draw_length").text()   = 1.0f;
   }
@@ -297,13 +297,8 @@ static void reshape(GLFWwindow* window, int width, int height)
   {
     pugi::xml_node node = hrRenderParamNode(renderRef);
 
-    wchar_t temp[256];
-    swprintf(temp, sizeof(temp) / sizeof(*temp), L"%d", g_width);
-   // wsprintf(temp, L"%d", g_width);
-    node.child(L"width").text().set(temp);
-    swprintf(temp, sizeof(temp) / sizeof(*temp), L"%d", g_height);
-    //wsprintf(temp, L"%d", g_height);
-    node.child(L"height").text().set(temp);
+    node.child(L"width").text()  = g_width;
+    node.child(L"height").text() = g_height;
   }
   hrRenderClose(renderRef);
 
