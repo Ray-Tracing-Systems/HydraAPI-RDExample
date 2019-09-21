@@ -196,7 +196,11 @@
     <ClCompile Include="mesh_utils.cpp" />
     <ClCompile Include="RenderDriverFormFactorIntegrator.cpp" />
     <ClCompile Include="RenderDriverOpenGL1.cpp" />
+<<<<<<< HEAD
     <ClCompile Include="RenderDriverVulkan.cpp" />
+=======
+    <ClCompile Include="RenderDriverOpenGL1Debug.cpp" />
+>>>>>>> add debug driver
     <ClCompile Include="RenderDrivers.cpp" />
     <ClCompile Include="Timer.cpp" />
     <ClCompile Include="window_main_free_look_vulkan.cpp" />
