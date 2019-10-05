@@ -78,10 +78,33 @@ struct Vertex {
   }
 };
 
-struct UniformBufferObject {
-  HydraLiteMath::float4x4 model;
-  HydraLiteMath::float4x4 view;
-  HydraLiteMath::float4x4 proj;
+class UniformBufferObject {
+  float4x4 model;
+  float4x4 view;
+  float4x4 proj;
+  float4x4 result;
+  void updateResult() {
+    result = mul(model, mul(view, proj));
+  }
+
+public:
+  void setModel(float4x4& m) {
+    model = m;
+  }
+
+  void setView(float3 eye, float3 center, float3 up) {
+    view = lookAtTransposed(eye, center, up);
+  }
+
+  void setProj(float camFov, float aspect, float camNearPlane, float camFarPlane) {
+    proj = projectionMatrixTransposed(camFov, aspect, camNearPlane, camFarPlane);
+    proj.M(1, 1) *= -1.f;
+  }
+
+  const float4x4& getResultRef() {
+    updateResult();
+    return result;
+  }
 };
 
 const std::vector<Vertex> vertices = {
@@ -931,7 +954,7 @@ void RD_Vulkan::createDescriptorSetLayout() {
 }
 
 void RD_Vulkan::createUniformBuffers() {
-  VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+  VkDeviceSize bufferSize = sizeof(float4x4);
 
   uniformBuffers.resize(swapChainImages.size());
   uniformBuffersMemory.resize(swapChainImages.size());
@@ -970,7 +993,7 @@ void RD_Vulkan::createDescriptorSets() {
     VkDescriptorBufferInfo bufferInfo = {};
     bufferInfo.buffer = uniformBuffers[i];
     bufferInfo.offset = 0;
-    bufferInfo.range = sizeof(UniformBufferObject);
+    bufferInfo.range = sizeof(float4x4);
 
     VkWriteDescriptorSet descriptorWrite = {};
     descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1360,20 +1383,21 @@ void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
   float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
   UniformBufferObject ubo = {};
-  ubo.model.identity();
+  ubo.setModel(float4x4());
 
-  float3 eye(camPos[0], camPos[1], camPos[2]);
-  float3 center(camLookAt[0], camLookAt[1], camLookAt[2]);
-  float3 up(camUp[0], camUp[1], camUp[2]);
-  ubo.view = lookAtTransposed(eye, center, up);
+  const float3 eye(camPos[0], camPos[1], camPos[2]);
+  const float3 center(camLookAt[0], camLookAt[1], camLookAt[2]);
+  const float3 up(camUp[0], camUp[1], camUp[2]);
+  ubo.setView(eye, center, up);
 
   const float aspect = float(m_width) / float(m_height);
-  ubo.proj = projectionMatrixTransposed(camFov, aspect, camNearPlane, camFarPlane);
-  ubo.proj.M(1, 1) *= -1.f;
+  ubo.setProj(camFov, aspect, camNearPlane, camFarPlane);
+  
+  float4x4 resultMatrix = ubo.getResultRef();
 
   void* data;
-  vkMapMemory(device, uniformBuffersMemory[current_image], 0, sizeof(ubo), 0, &data);
-  memcpy(data, &ubo, sizeof(ubo));
+  vkMapMemory(device, uniformBuffersMemory[current_image], 0, sizeof(resultMatrix), 0, &data);
+  memcpy(data, &resultMatrix, sizeof(resultMatrix));
   vkUnmapMemory(device, uniformBuffersMemory[current_image]);
 }
 
