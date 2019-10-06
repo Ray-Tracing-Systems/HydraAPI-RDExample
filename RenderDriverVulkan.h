@@ -177,13 +177,18 @@ protected:
     int swapchain_images = 0;
     const int MAX_INSTANCES = 128;
 
+    VkImageView textureImageView;
+    VkSampler textureSampler;
+
     void createUniformBuffers();
     void createDescriptorPool();
     void createDescriptorSets();
 
   public:
-    InstancesCollection(VkDevice dev, VkDescriptorSetLayout layout, int mesh_id, int swapchain_im)
-      : device(dev), descriptorSetLayout(layout), meshId(mesh_id), swapchain_images(swapchain_im) {
+    InstancesCollection(VkDevice dev, VkDescriptorSetLayout layout, VkImageView view, VkSampler sampler, int mesh_id, int swapchain_im)
+      : device(dev), descriptorSetLayout(layout),
+      textureImageView(view), textureSampler(sampler),
+      meshId(mesh_id), swapchain_images(swapchain_im) {
       createUniformBuffers();
       createDescriptorPool();
       createDescriptorSets();
@@ -203,6 +208,7 @@ protected:
     VkDevice deviceRef;
     VkCommandPool commandPoolRef;
     VkQueue queueRef;
+
   public:
     void init(VkPhysicalDevice physicalDevice, VkDevice device, VkCommandPool commandPool, VkQueue queue) {
       physicalDeviceRef = physicalDevice;
@@ -214,11 +220,32 @@ protected:
       static BufferManager instance;
       return instance;
     }
+
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+    void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+    void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+
+
+    VkCommandBuffer beginSingleTimeCommands();
+    void endSingleTimeCommands(VkCommandBuffer commandBuffer);
   private:
     BufferManager() {}
     ~BufferManager() {}
+
+    class SingleTimeCommandsContext {
+      VkCommandBuffer commandBuffer;
+    public:
+      SingleTimeCommandsContext() {
+        commandBuffer = BufferManager::get().beginSingleTimeCommands();
+      }
+      ~SingleTimeCommandsContext() {
+        BufferManager::get().endSingleTimeCommands(commandBuffer);
+      }
+      VkCommandBuffer getCB() const {
+        return commandBuffer;
+      }
+    };
   };
 
   void createInstance();
@@ -235,7 +262,13 @@ protected:
   void createSyncObjects();
   void recreateSwapChain();
   void cleanupSwapChain();
+  void createTextureImage();
+  void createTextureImageView();
+  VkImageView createImageView(VkImage image, VkFormat format);
+  void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
+    VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
   QueueFamilyIndices GetQueueFamilyIndex(VkPhysicalDevice physicalDevice);
+  void createTextureSampler();
 
   void createDescriptorSetLayout();
   void updateUniformBuffer(uint32_t current_image);
@@ -285,6 +318,10 @@ protected:
   size_t currentFrame = 0;
   std::map<int, std::unique_ptr<Mesh>> meshes;
   std::vector<std::unique_ptr<InstancesCollection>> instances;
+  VkImage textureImage;
+  VkDeviceMemory textureImageMemory;
+  VkImageView textureImageView;
+  VkSampler textureSampler;
 };
 
 
@@ -347,5 +384,3 @@ struct RD_Vulkan_ShowCustomAttr : public RD_Vulkan
 protected:
   
 };
-
-
