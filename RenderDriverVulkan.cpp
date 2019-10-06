@@ -78,35 +78,6 @@ struct Vertex {
   }
 };
 
-class UniformBufferObject {
-  float4x4 model;
-  float4x4 view;
-  float4x4 proj;
-  float4x4 result;
-  void updateResult() {
-    result = mul(model, mul(view, proj));
-  }
-
-public:
-  void setModel(float4x4& m) {
-    model = m;
-  }
-
-  void setView(float3 eye, float3 center, float3 up) {
-    view = lookAtTransposed(eye, center, up);
-  }
-
-  void setProj(float camFov, float aspect, float camNearPlane, float camFarPlane) {
-    proj = projectionMatrixTransposed(camFov, aspect, camNearPlane, camFarPlane);
-    proj.M(1, 1) *= -1.f;
-  }
-
-  const float4x4& getResultRef() {
-    updateResult();
-    return result;
-  }
-};
-
 const std::vector<Vertex> vertices = {
     {{-0.5f, -0.5f, 0.f}, {1.0f, 0.0f, 0.0f}},
     {{0.5f, -0.5f, 0.f}, {0.0f, 1.0f, 0.0f}},
@@ -838,6 +809,10 @@ void RD_Vulkan::Mesh::bind(VkCommandBuffer command_buffer) {
   vkCmdBindIndexBuffer(command_buffer, indexBuffer, 0, (indicesCount >= 1 << 16) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
 }
 
+void RD_Vulkan::InstancesCollection::bind(VkCommandBuffer command_buffer, VkPipelineLayout layout, int idx) {
+  vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptorSets[idx], 0, nullptr);
+}
+
 void RD_Vulkan::createCommandBuffers() {
   commandBuffers.resize(swapChainImages.size());
 
@@ -871,12 +846,10 @@ void RD_Vulkan::createCommandBuffers() {
 
     vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-    for (auto it = meshes.begin(); it != meshes.end(); ++it)
-    {
-      it->second->bind(commandBuffers[i]);
-      vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[i], 0, nullptr);
-
-      vkCmdDrawIndexed(commandBuffers[i], it->second->getIndicesCount(), 1, 0, 0, 0);
+    for (auto &instance : instances) {
+      meshes[instance->getMeshId()]->bind(commandBuffers[i]);
+      instance->bind(commandBuffers[i], pipelineLayout, i);
+      vkCmdDrawIndexed(commandBuffers[i], meshes[instance->getMeshId()]->getIndicesCount(), 1, 0, 0, 0);
     }
     vkCmdEndRenderPass(commandBuffers[i]);
     VK_CHECK_RESULT(vkEndCommandBuffer(commandBuffers[i]));
@@ -898,6 +871,14 @@ void RD_Vulkan::createSyncObjects() {
   }
 }
 
+RD_Vulkan::InstancesCollection::~InstancesCollection() {
+  for (size_t i = 0; i < swapchain_images; i++) {
+    vkDestroyBuffer(device, uniformBuffers[i], nullptr);
+    vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
+  }
+  vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+}
+
 void RD_Vulkan::cleanupSwapChain() {
   for (auto framebuffer : swapChainFramebuffers) {
     vkDestroyFramebuffer(device, framebuffer, nullptr);
@@ -914,11 +895,7 @@ void RD_Vulkan::cleanupSwapChain() {
 
   vkDestroySwapchainKHR(device, swapchain, nullptr);
 
-  for (size_t i = 0; i < swapChainImages.size(); i++) {
-    vkDestroyBuffer(device, uniformBuffers[i], nullptr);
-    vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
-  }
-  vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+  instances.clear();
 }
 
 void RD_Vulkan::recreateSwapChain() {
@@ -931,9 +908,6 @@ void RD_Vulkan::recreateSwapChain() {
   createRenderPass();
   createGraphicsPipeline();
   createFramebuffers();
-  createUniformBuffers();
-  createDescriptorPool();
-  createDescriptorSets();
   createCommandBuffers();
 }
 
@@ -953,47 +927,47 @@ void RD_Vulkan::createDescriptorSetLayout() {
   VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout));
 }
 
-void RD_Vulkan::createUniformBuffers() {
-  VkDeviceSize bufferSize = sizeof(float4x4);
+void RD_Vulkan::InstancesCollection::createUniformBuffers() {
+  VkDeviceSize bufferSize = sizeof(float4x4) * MAX_INSTANCES;
 
-  uniformBuffers.resize(swapChainImages.size());
-  uniformBuffersMemory.resize(swapChainImages.size());
+  uniformBuffers.resize(swapchain_images);
+  uniformBuffersMemory.resize(swapchain_images);
 
-  for (size_t i = 0; i < swapChainImages.size(); i++) {
+  for (size_t i = 0; i < swapchain_images; i++) {
     BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
   }
 }
 
-void RD_Vulkan::createDescriptorPool() {
+void RD_Vulkan::InstancesCollection::createDescriptorPool() {
   VkDescriptorPoolSize poolSize = {};
   poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  poolSize.descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+  poolSize.descriptorCount = static_cast<uint32_t>(swapchain_images);
 
   VkDescriptorPoolCreateInfo poolInfo = {};
   poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
   poolInfo.poolSizeCount = 1;
   poolInfo.pPoolSizes = &poolSize;
-  poolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());
+  poolInfo.maxSets = static_cast<uint32_t>(swapchain_images);
 
   VK_CHECK_RESULT(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
 }
 
-void RD_Vulkan::createDescriptorSets() {
-  std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
+void RD_Vulkan::InstancesCollection::createDescriptorSets() {
+  std::vector<VkDescriptorSetLayout> layouts(swapchain_images, descriptorSetLayout);
   VkDescriptorSetAllocateInfo allocInfo = {};
   allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
   allocInfo.descriptorPool = descriptorPool;
-  allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChainImages.size());
+  allocInfo.descriptorSetCount = static_cast<uint32_t>(swapchain_images);
   allocInfo.pSetLayouts = layouts.data();
 
-  descriptorSets.resize(swapChainImages.size());
+  descriptorSets.resize(swapchain_images);
   VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()));
 
-  for (size_t i = 0; i < swapChainImages.size(); i++) {
+  for (size_t i = 0; i < swapchain_images; i++) {
     VkDescriptorBufferInfo bufferInfo = {};
     bufferInfo.buffer = uniformBuffers[i];
     bufferInfo.offset = 0;
-    bufferInfo.range = sizeof(float4x4);
+    bufferInfo.range = sizeof(float4x4) * MAX_INSTANCES;
 
     VkWriteDescriptorSet descriptorWrite = {};
     descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1024,9 +998,6 @@ RD_Vulkan::RD_Vulkan()
   createFramebuffers();
   createCommandPool();
   BufferManager::get().init(physicalDevice, device, commandPool, graphicsQueue);
-  createUniformBuffers();
-  createDescriptorPool();
-  createDescriptorSets();
   createCommandBuffers();
   createSyncObjects();
 
@@ -1376,29 +1347,33 @@ void RD_Vulkan::Draw()
   currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
+void RD_Vulkan::InstancesCollection::updateUniformBuffer(uint32_t current_image, const float4x4& view, const float4x4& proj) {
+  std::vector<float4x4> resMatrices;
+  for (auto& ubo : ubos) {
+    ubo.setView(view);
+    ubo.setProj(proj);
+    resMatrices.push_back(ubo.getResultRef());
+  }
+
+  void* data;
+  vkMapMemory(device, uniformBuffersMemory[current_image], 0, sizeof(resMatrices[0]) * resMatrices.size(), 0, &data);
+  memcpy(data, resMatrices.data(), sizeof(resMatrices[0]) * resMatrices.size());
+  vkUnmapMemory(device, uniformBuffersMemory[current_image]);
+}
+
 void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
-  static auto startTime = std::chrono::high_resolution_clock::now();
-
-  auto currentTime = std::chrono::high_resolution_clock::now();
-  float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
-  UniformBufferObject ubo = {};
-  ubo.setModel(float4x4());
-
   const float3 eye(camPos[0], camPos[1], camPos[2]);
   const float3 center(camLookAt[0], camLookAt[1], camLookAt[2]);
   const float3 up(camUp[0], camUp[1], camUp[2]);
-  ubo.setView(eye, center, up);
+  const float4x4 view = lookAtTransposed(eye, center, up);
 
   const float aspect = float(m_width) / float(m_height);
-  ubo.setProj(camFov, aspect, camNearPlane, camFarPlane);
-  
-  float4x4 resultMatrix = ubo.getResultRef();
+  float4x4 proj = projectionMatrixTransposed(camFov, aspect, camNearPlane, camFarPlane);
+  proj.M(1, 1) *= -1.f;
 
-  void* data;
-  vkMapMemory(device, uniformBuffersMemory[current_image], 0, sizeof(resultMatrix), 0, &data);
-  memcpy(data, &resultMatrix, sizeof(resultMatrix));
-  vkUnmapMemory(device, uniformBuffersMemory[current_image]);
+  for (auto& instance : instances) {
+    instance->updateUniformBuffer(current_image, view, proj);
+  }
 }
 
 static inline void mat4x4_transpose(float M[16], const float N[16])
@@ -1410,13 +1385,57 @@ static inline void mat4x4_transpose(float M[16], const float N[16])
   }
 }
 
+bool RD_Vulkan::InstancesCollection::instancesUpdated(const std::vector<float4x4>& models) const {
+  if (models.size() != ubos.size()) {
+    return true;
+  }
+  for (int i = 0; i < models.size(); ++i) {
+    for (int j = 0; j < 4; ++j) {
+      if (models[i].row[j].x != ubos[i].getModel().row[j].x
+        || models[i].row[j].y != ubos[i].getModel().row[j].y
+        || models[i].row[j].z != ubos[i].getModel().row[j].z
+        || models[i].row[j].w != ubos[i].getModel().row[j].w) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+void RD_Vulkan::InstancesCollection::updateInstances(const std::vector<HydraLiteMath::float4x4>& models) {
+  assert(models.size() < MAX_INSTANCES);
+  ubos.resize(models.size());
+  for (int i = 0; i < ubos.size(); ++i) {
+    ubos[i].setModel(models[i]);
+  }
+}
+
 void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32_t a_instNum, const int* a_lightInstId, const int* a_remapId, const int* a_realInstId)
 {
+  int instancesId = 0;
+  for (; instancesId < instances.size(); ++instancesId) {
+    if (a_mesh_id == instances[instancesId]->getMeshId()) {
+      break;
+    }
+  }
+  std::vector<float4x4> models(a_instNum, a_matrices);
   for (int32_t i = 0; i < a_instNum; i++)
   {
     float matrixT2[16];
-    mat4x4_transpose(matrixT2, (float*)(a_matrices + i*16));
+    mat4x4_transpose(matrixT2, (float*)(a_matrices + i * 16));
+    models[i] = float4x4(matrixT2);
   }
+
+  if (instancesId != instances.size() && instances[instancesId]->instancesUpdated(models)) {
+    return;
+  }
+
+  if (instancesId == instances.size()) {
+    instances.push_back(std::make_unique<InstancesCollection>(device, descriptorSetLayout, a_mesh_id, swapChainImages.size()));
+    createCommandBuffers();
+  }
+
+  instances[instancesId]->updateInstances(models);
 }
 
 
@@ -1427,7 +1446,6 @@ void RD_Vulkan::InstanceLights(int32_t a_light_id, const float* a_matrix, pugi::
 
 HRRenderUpdateInfo RD_Vulkan::HaveUpdateNow(int a_maxRaysPerPixel)
 {
-  //glFlush();
   HRRenderUpdateInfo res;
   res.finalUpdate   = true;
   res.haveUpdateFB  = true;

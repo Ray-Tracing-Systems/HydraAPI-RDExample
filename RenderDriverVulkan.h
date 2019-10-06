@@ -24,6 +24,46 @@
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct Vertex;
+class UniformBufferObject {
+  HydraLiteMath::float4x4 model;
+  HydraLiteMath::float4x4 view;
+  HydraLiteMath::float4x4 proj;
+  HydraLiteMath::float4x4 result;
+  void updateResult() {
+    result = mul(model, mul(view, proj));
+  }
+
+public:
+  void setModel(const HydraLiteMath::float4x4& m) {
+    model = m;
+  }
+
+  void setView(const HydraLiteMath::float3 eye, const HydraLiteMath::float3 center, const HydraLiteMath::float3 up) {
+    view = lookAtTransposed(eye, center, up);
+  }
+
+  void setView(const HydraLiteMath::float4x4& m) {
+    view = m;
+  }
+
+  void setProj(float camFov, float aspect, float camNearPlane, float camFarPlane) {
+    proj = HydraLiteMath::projectionMatrixTransposed(camFov, aspect, camNearPlane, camFarPlane);
+    proj.M(1, 1) *= -1.f;
+  }
+
+  void setProj(const HydraLiteMath::float4x4& m) {
+    proj = m;
+  }
+
+  const HydraLiteMath::float4x4& getResultRef() {
+    updateResult();
+    return result;
+  }
+
+  const HydraLiteMath::float4x4& getModel() const {
+    return model;
+  }
+};
 
 struct RD_Vulkan : public IHRRenderDriver
 {
@@ -125,6 +165,39 @@ protected:
     }
   };
 
+  class InstancesCollection {
+    std::vector<UniformBufferObject> ubos;
+    int meshId;
+    VkDescriptorSetLayout descriptorSetLayout;
+    std::vector<VkBuffer> uniformBuffers;
+    std::vector<VkDeviceMemory> uniformBuffersMemory;
+    VkDescriptorPool descriptorPool;
+    std::vector<VkDescriptorSet> descriptorSets;
+    VkDevice device;
+    int swapchain_images = 0;
+    const int MAX_INSTANCES = 128;
+
+    void createUniformBuffers();
+    void createDescriptorPool();
+    void createDescriptorSets();
+
+  public:
+    InstancesCollection(VkDevice dev, VkDescriptorSetLayout layout, int mesh_id, int swapchain_im)
+      : device(dev), descriptorSetLayout(layout), meshId(mesh_id), swapchain_images(swapchain_im) {
+      createUniformBuffers();
+      createDescriptorPool();
+      createDescriptorSets();
+    }
+
+    ~InstancesCollection();
+
+    int getMeshId() const { return meshId; }
+    bool instancesUpdated(const std::vector<HydraLiteMath::float4x4>& models) const;
+    void updateInstances(const std::vector<HydraLiteMath::float4x4>& models);
+    void bind(VkCommandBuffer command_buffer, VkPipelineLayout layout, int idx);
+    void updateUniformBuffer(uint32_t current_image, const HydraLiteMath::float4x4& view, const HydraLiteMath::float4x4& proj);
+  };
+
   class BufferManager {
     VkPhysicalDevice physicalDeviceRef;
     VkDevice deviceRef;
@@ -165,10 +238,7 @@ protected:
   QueueFamilyIndices GetQueueFamilyIndex(VkPhysicalDevice physicalDevice);
 
   void createDescriptorSetLayout();
-  void createUniformBuffers();
   void updateUniformBuffer(uint32_t current_image);
-  void createDescriptorPool();
-  void createDescriptorSets();
 
   std::wstring m_libPath;
 
@@ -213,12 +283,8 @@ protected:
   VkPipeline graphicsPipeline;
   VkCommandPool commandPool;
   size_t currentFrame = 0;
-  //std::unique_ptr<Mesh> defaultMesh;
   std::map<int, std::unique_ptr<Mesh>> meshes;
-  std::vector<VkBuffer> uniformBuffers;
-  std::vector<VkDeviceMemory> uniformBuffersMemory;
-  VkDescriptorPool descriptorPool;
-  std::vector<VkDescriptorSet> descriptorSets;
+  std::vector<std::unique_ptr<InstancesCollection>> instances;
 };
 
 
