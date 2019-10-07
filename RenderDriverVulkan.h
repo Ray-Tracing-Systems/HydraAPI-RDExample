@@ -173,12 +173,12 @@ protected:
     VkImageView textureImageView;
     VkSampler textureSampler;
 
-    void createTextureImage();
+    void createTextureImage(uint32_t width, uint32_t height, const uint8_t* image);
     void createTextureImageView();
     void createTextureSampler();
   public:
-    Texture(VkDevice dev) : deviceRef(dev) {
-      createTextureImage();
+    Texture(VkDevice dev, uint32_t width, uint32_t height, const uint8_t* image) : deviceRef(dev) {
+      createTextureImage(width, height, image);
       createTextureImageView();
       createTextureSampler();
     }

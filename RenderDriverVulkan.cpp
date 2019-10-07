@@ -912,12 +912,8 @@ void RD_Vulkan::BufferManager::endSingleTimeCommands(VkCommandBuffer commandBuff
   vkFreeCommandBuffers(deviceRef, commandPoolRef, 1, &commandBuffer);
 }
 
-void RD_Vulkan::Texture::createTextureImage() {
-  //TODO: Use real data
-  const int texWidth = 2;
-  const int texHeight = 2;
-  uint32_t colors[texWidth * texHeight] = { 0x000000FF, 0x0000FF00, 0x00FF0000, 0x00FFFFFF };
-  VkDeviceSize imageSize = sizeof(colors);
+void RD_Vulkan::Texture::createTextureImage(uint32_t width, uint32_t height, const uint8_t *image) {
+  VkDeviceSize imageSize = width * height * 4;
 
   VkBuffer stagingBuffer;
   VkDeviceMemory stagingBufferMemory;
@@ -926,14 +922,14 @@ void RD_Vulkan::Texture::createTextureImage() {
 
   void* data;
   vkMapMemory(deviceRef, stagingBufferMemory, 0, imageSize, 0, &data);
-  memcpy(data, colors, static_cast<size_t>(imageSize));
+  memcpy(data, image, static_cast<size_t>(imageSize));
   vkUnmapMemory(deviceRef, stagingBufferMemory);
 
-  BufferManager::get().createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+  BufferManager::get().createImage(width, height, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
 
   BufferManager::get().transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  BufferManager::get().copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+  BufferManager::get().copyBufferToImage(stagingBuffer, textureImage, width, height);
   BufferManager::get().transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
   vkDestroyBuffer(deviceRef, stagingBuffer, nullptr);
@@ -1188,7 +1184,8 @@ void RD_Vulkan::Texture::createTextureSampler() {
 }
 
 void RD_Vulkan::createDefaultTexture() {
-  defaultTexture = std::make_unique<Texture>(device);
+  const uint8_t WHITE_COLOR[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+  defaultTexture = std::make_unique<Texture>(device, 1, 1, WHITE_COLOR);
 }
 
 RD_Vulkan::RD_Vulkan()
@@ -1319,7 +1316,7 @@ bool RD_Vulkan::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, 
 	if (bpp > 4) 
     delete [] convertedData;
 
-  textures.push_back(std::make_unique<Texture>(device));
+  //textures.push_back(std::make_unique<Texture>(device));
   return true;
 }
 
