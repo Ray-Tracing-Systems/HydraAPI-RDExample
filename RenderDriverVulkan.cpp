@@ -807,7 +807,7 @@ void RD_Vulkan::createImageViews() {
   swapChainImageViews.resize(swapChainImages.size());
 
   for (int i = 0; i < swapChainImageViews.size(); ++i) {
-    swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat);
+    swapChainImageViews[i] = BufferManager::get().createImageView(swapChainImages[i], swapChainImageFormat);
   }
 }
 
@@ -847,7 +847,7 @@ void RD_Vulkan::InstancesCollection::bind(VkCommandBuffer command_buffer, VkPipe
   vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptorSets[idx], 0, nullptr);
 }
 
-void RD_Vulkan::createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
+void RD_Vulkan::BufferManager::createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
   VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory)
 {
   VkImageCreateInfo imageInfo = {};
@@ -865,18 +865,18 @@ void RD_Vulkan::createImage(uint32_t width, uint32_t height, VkFormat format, Vk
   imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
   imageInfo.flags = 0; // Optional
-  VK_CHECK_RESULT(vkCreateImage(device, &imageInfo, nullptr, &image));
+  VK_CHECK_RESULT(vkCreateImage(deviceRef, &imageInfo, nullptr, &image));
 
   VkMemoryRequirements memRequirements;
-  vkGetImageMemoryRequirements(device, image, &memRequirements);
+  vkGetImageMemoryRequirements(deviceRef, image, &memRequirements);
 
   VkMemoryAllocateInfo allocInfo = {};
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = memRequirements.size;
-  allocInfo.memoryTypeIndex = findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties);
-  VK_CHECK_RESULT(vkAllocateMemory(device, &allocInfo, nullptr, &imageMemory));
+  allocInfo.memoryTypeIndex = findMemoryType(physicalDeviceRef, memRequirements.memoryTypeBits, properties);
+  VK_CHECK_RESULT(vkAllocateMemory(deviceRef, &allocInfo, nullptr, &imageMemory));
 
-  vkBindImageMemory(device, image, imageMemory, 0);
+  vkBindImageMemory(deviceRef, image, imageMemory, 0);
 }
 
 VkCommandBuffer RD_Vulkan::BufferManager::beginSingleTimeCommands() {
@@ -912,7 +912,7 @@ void RD_Vulkan::BufferManager::endSingleTimeCommands(VkCommandBuffer commandBuff
   vkFreeCommandBuffers(deviceRef, commandPoolRef, 1, &commandBuffer);
 }
 
-void RD_Vulkan::createTextureImage() {
+void RD_Vulkan::Texture::createTextureImage() {
   //TODO: Use real data
   const int texWidth = 2;
   const int texHeight = 2;
@@ -925,22 +925,22 @@ void RD_Vulkan::createTextureImage() {
   BufferManager::get().createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
   void* data;
-  vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+  vkMapMemory(deviceRef, stagingBufferMemory, 0, imageSize, 0, &data);
   memcpy(data, colors, static_cast<size_t>(imageSize));
-  vkUnmapMemory(device, stagingBufferMemory);
+  vkUnmapMemory(deviceRef, stagingBufferMemory);
 
-  createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+  BufferManager::get().createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
 
   BufferManager::get().transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   BufferManager::get().copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
   BufferManager::get().transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-  vkDestroyBuffer(device, stagingBuffer, nullptr);
-  vkFreeMemory(device, stagingBufferMemory, nullptr);
+  vkDestroyBuffer(deviceRef, stagingBuffer, nullptr);
+  vkFreeMemory(deviceRef, stagingBufferMemory, nullptr);
 }
 
-VkImageView RD_Vulkan::createImageView(VkImage image, VkFormat format) {
+VkImageView RD_Vulkan::BufferManager::createImageView(VkImage image, VkFormat format) {
   VkImageViewCreateInfo viewInfo = {};
   viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   viewInfo.image = image;
@@ -953,13 +953,13 @@ VkImageView RD_Vulkan::createImageView(VkImage image, VkFormat format) {
   viewInfo.subresourceRange.layerCount = 1;
 
   VkImageView imageView;
-  VK_CHECK_RESULT(vkCreateImageView(device, &viewInfo, nullptr, &imageView));
+  VK_CHECK_RESULT(vkCreateImageView(deviceRef, &viewInfo, nullptr, &imageView));
 
   return imageView;
 }
 
-void RD_Vulkan::createTextureImageView() {
-  textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM);
+void RD_Vulkan::Texture::createTextureImageView() {
+  textureImageView = BufferManager::get().createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM);
 }
 
 void RD_Vulkan::createCommandBuffers() {
@@ -1111,6 +1111,14 @@ void RD_Vulkan::InstancesCollection::createDescriptorPool() {
   VK_CHECK_RESULT(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
 }
 
+VkDescriptorImageInfo RD_Vulkan::Texture::getDescriptor() const {
+  VkDescriptorImageInfo imageInfo = {};
+  imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  imageInfo.imageView = textureImageView;
+  imageInfo.sampler = textureSampler;
+  return imageInfo;
+}
+
 void RD_Vulkan::InstancesCollection::createDescriptorSets() {
   std::vector<VkDescriptorSetLayout> layouts(swapchain_images, descriptorSetLayout);
   VkDescriptorSetAllocateInfo allocInfo = {};
@@ -1128,12 +1136,9 @@ void RD_Vulkan::InstancesCollection::createDescriptorSets() {
     bufferInfo.offset = 0;
     bufferInfo.range = sizeof(float4x4) * MAX_INSTANCES;
 
-    VkDescriptorImageInfo imageInfo = {};
-    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    imageInfo.imageView = textureImageView;
-    imageInfo.sampler = textureSampler;
+    VkDescriptorImageInfo imageInfo;
 
-    std::array<VkWriteDescriptorSet, 2> descriptorWrites = {};
+    std::vector<VkWriteDescriptorSet> descriptorWrites(1);
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[0].dstSet = descriptorSets[i];
     descriptorWrites[0].dstBinding = 0;
@@ -1144,19 +1149,23 @@ void RD_Vulkan::InstancesCollection::createDescriptorSets() {
     descriptorWrites[0].pImageInfo = nullptr; // Optional
     descriptorWrites[0].pTexelBufferView = nullptr; // Optional
 
-    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[1].dstSet = descriptorSets[i];
-    descriptorWrites[1].dstBinding = 1;
-    descriptorWrites[1].dstArrayElement = 0;
-    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    descriptorWrites[1].descriptorCount = 1;
-    descriptorWrites[1].pImageInfo = &imageInfo;
+    if (texture) {
+      descriptorWrites.resize(2);
+      imageInfo = texture->getDescriptor();
+      descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+      descriptorWrites[1].dstSet = descriptorSets[i];
+      descriptorWrites[1].dstBinding = 1;
+      descriptorWrites[1].dstArrayElement = 0;
+      descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      descriptorWrites[1].descriptorCount = 1;
+      descriptorWrites[1].pImageInfo = &imageInfo;
+    }
 
     vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
   }
 }
 
-void RD_Vulkan::createTextureSampler() {
+void RD_Vulkan::Texture::createTextureSampler() {
   VkSamplerCreateInfo samplerInfo = {};
   samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
   samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -1175,7 +1184,11 @@ void RD_Vulkan::createTextureSampler() {
   samplerInfo.minLod = 0.0f;
   samplerInfo.maxLod = 0.0f;
 
-  VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler));
+  VK_CHECK_RESULT(vkCreateSampler(deviceRef, &samplerInfo, nullptr, &textureSampler));
+}
+
+void RD_Vulkan::createDefaultTexture() {
+  defaultTexture = std::make_unique<Texture>(device);
 }
 
 RD_Vulkan::RD_Vulkan()
@@ -1185,6 +1198,7 @@ RD_Vulkan::RD_Vulkan()
   pickPhysicalDevice();
   createLogicalDevice();
   createSwapChain();
+  BufferManager::get().init(physicalDevice, device, commandPool, graphicsQueue);
   createImageViews();
   createRenderPass();
   createDescriptorSetLayout();
@@ -1192,9 +1206,7 @@ RD_Vulkan::RD_Vulkan()
   createFramebuffers();
   createCommandPool();
   BufferManager::get().init(physicalDevice, device, commandPool, graphicsQueue);
-  createTextureImage();
-  createTextureImageView();
-  createTextureSampler();
+  createDefaultTexture();
   createCommandBuffers();
   createSyncObjects();
 
@@ -1210,16 +1222,21 @@ RD_Vulkan::RD_Vulkan()
   camUseMatrices = false;
 }
 
+RD_Vulkan::Texture::~Texture() {
+  vkDestroySampler(deviceRef, textureSampler, nullptr);
+  vkDestroyImageView(deviceRef, textureImageView, nullptr);
+
+  vkDestroyImage(deviceRef, textureImage, nullptr);
+  vkFreeMemory(deviceRef, textureImageMemory, nullptr);
+}
+
 RD_Vulkan::~RD_Vulkan()
 {
   vkDeviceWaitIdle(device);
   cleanupSwapChain();
 
-  vkDestroySampler(device, textureSampler, nullptr);
-  vkDestroyImageView(device, textureImageView, nullptr);
-
-  vkDestroyImage(device, textureImage, nullptr);
-  vkFreeMemory(device, textureImageMemory, nullptr);
+  defaultTexture.reset();
+  textures.clear();
 
   vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
@@ -1302,6 +1319,7 @@ bool RD_Vulkan::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, 
 	if (bpp > 4) 
     delete [] convertedData;
 
+  textures.push_back(std::make_unique<Texture>(device));
   return true;
 }
 
@@ -1635,7 +1653,7 @@ void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32
   }
 
   if (instancesId == instances.size()) {
-    instances.push_back(std::make_unique<InstancesCollection>(device, descriptorSetLayout, textureImageView, textureSampler, a_mesh_id, static_cast<int>(swapChainImages.size())));
+    instances.push_back(std::make_unique<InstancesCollection>(device, descriptorSetLayout, defaultTexture.get(), a_mesh_id, static_cast<int>(swapChainImages.size())));
     createCommandBuffers();
   }
 

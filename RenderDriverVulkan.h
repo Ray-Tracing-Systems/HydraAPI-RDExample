@@ -165,6 +165,29 @@ protected:
     }
   };
 
+  class Texture {
+    VkDevice deviceRef;
+
+    VkImage textureImage;
+    VkDeviceMemory textureImageMemory;
+    VkImageView textureImageView;
+    VkSampler textureSampler;
+
+    void createTextureImage();
+    void createTextureImageView();
+    void createTextureSampler();
+  public:
+    Texture(VkDevice dev) : deviceRef(dev) {
+      createTextureImage();
+      createTextureImageView();
+      createTextureSampler();
+    }
+
+    ~Texture();
+
+    VkDescriptorImageInfo getDescriptor() const;
+  };
+
   class InstancesCollection {
     std::vector<UniformBufferObject> ubos;
     int meshId;
@@ -177,17 +200,15 @@ protected:
     int swapchain_images = 0;
     const int MAX_INSTANCES = 128;
 
-    VkImageView textureImageView;
-    VkSampler textureSampler;
+    Texture *texture;
 
     void createUniformBuffers();
     void createDescriptorPool();
     void createDescriptorSets();
 
   public:
-    InstancesCollection(VkDevice dev, VkDescriptorSetLayout layout, VkImageView view, VkSampler sampler, int mesh_id, int swapchain_im)
-      : device(dev), descriptorSetLayout(layout),
-      textureImageView(view), textureSampler(sampler),
+    InstancesCollection(VkDevice dev, VkDescriptorSetLayout layout, Texture *tex, int mesh_id, int swapchain_im)
+      : device(dev), descriptorSetLayout(layout), texture(tex),
       meshId(mesh_id), swapchain_images(swapchain_im) {
       createUniformBuffers();
       createDescriptorPool();
@@ -226,6 +247,9 @@ protected:
     void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
 
+    VkImageView createImageView(VkImage image, VkFormat format);
+    void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
+      VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
 
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
@@ -262,13 +286,8 @@ protected:
   void createSyncObjects();
   void recreateSwapChain();
   void cleanupSwapChain();
-  void createTextureImage();
-  void createTextureImageView();
-  VkImageView createImageView(VkImage image, VkFormat format);
-  void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
-    VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+  void createDefaultTexture();
   QueueFamilyIndices GetQueueFamilyIndex(VkPhysicalDevice physicalDevice);
-  void createTextureSampler();
 
   void createDescriptorSetLayout();
   void updateUniformBuffer(uint32_t current_image);
@@ -318,10 +337,8 @@ protected:
   size_t currentFrame = 0;
   std::map<int, std::unique_ptr<Mesh>> meshes;
   std::vector<std::unique_ptr<InstancesCollection>> instances;
-  VkImage textureImage;
-  VkDeviceMemory textureImageMemory;
-  VkImageView textureImageView;
-  VkSampler textureSampler;
+  std::vector<std::unique_ptr<Texture>> textures;
+  std::unique_ptr<Texture> defaultTexture;
 };
 
 
