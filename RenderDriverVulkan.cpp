@@ -992,9 +992,12 @@ void RD_Vulkan::createCommandBuffers() {
     vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
     for (auto &instance : instances) {
-      meshes[instance->getMeshId()]->bind(commandBuffers[i]);
-      instance->bind(commandBuffers[i], pipelineLayout, i);
-      vkCmdDrawIndexed(commandBuffers[i], meshes[instance->getMeshId()]->getIndicesCount(), 1, 0, 0, 0);
+      for (uint32_t j = 0; j < meshes[instance->getMeshId()].getMeshesCount(); ++j) {
+        Mesh* mesh = meshes[instance->getMeshId()].getMesh(j);
+        mesh->bind(commandBuffers[i]);
+        instance->bind(commandBuffers[i], pipelineLayout, i);
+        vkCmdDrawIndexed(commandBuffers[i], mesh->getIndicesCount(), 1, 0, 0, 0);
+      }
     }
     vkCmdEndRenderPass(commandBuffers[i]);
     VK_CHECK_RESULT(vkEndCommandBuffer(commandBuffers[i]));
@@ -1457,29 +1460,45 @@ bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HR
 
   bool invalidMaterial = m_diffTexId.empty();
 
-  std::vector<Vertex> vertices;
-  for (int i = 0; i < a_input.vertNum; ++i) {
-    float3 pos = { a_input.pos4f[4 * i], a_input.pos4f[4 * i + 1], a_input.pos4f[4 * i + 2] };
-    float3 color = { a_input.norm4f[4 * i], a_input.norm4f[4 * i + 1], a_input.norm4f[4 * i + 2] };
-    float2 tc = { a_input.texcoord2f[2 * i], a_input.texcoord2f[2 * i + 1] };
-    Vertex vertex = { pos, color * 0.5f + 0.5f, tc };
-    vertices.push_back(vertex);
+  std::vector<uint32_t> begins(1, 0);
+  for (int i = 1; i < a_input.triNum; ++i) {
+    if (a_input.triMatIndices[i] != a_input.triMatIndices[i - 1]) {
+      begins.push_back(i);
+    }
   }
+  begins.push_back(a_input.triNum);
 
-  meshes[a_meshId] = std::make_unique<Mesh>(device);
-  if (a_input.triNum * 3 >= 1 << 16) {
+  for (int matId = 0; matId < begins.size() - 1; ++matId) {
     std::vector<uint32_t> indices;
-    for (int i = 0; i < a_input.triNum * 3; ++i) {
-      indices.push_back(a_input.indices[i]);
+    for (uint32_t i = begins[matId]; i < begins[matId + 1]; ++i) {
+      indices.push_back(a_input.indices[i * 3]);
+      indices.push_back(a_input.indices[i * 3 + 1]);
+      indices.push_back(a_input.indices[i * 3 + 2]);
     }
-    meshes[a_meshId]->createMesh(vertices, indices);
-  }
-  else {
-    std::vector<uint16_t> indices;
-    for (int i = 0; i < a_input.triNum * 3; ++i) {
-      indices.push_back(a_input.indices[i]);
+    std::vector<Vertex> vertices;
+    for (uint32_t i : indices) {
+      float3 pos = { a_input.pos4f[4 * i], a_input.pos4f[4 * i + 1], a_input.pos4f[4 * i + 2] };
+      float3 color = { a_input.norm4f[4 * i], a_input.norm4f[4 * i + 1], a_input.norm4f[4 * i + 2] };
+      float2 tc = { a_input.texcoord2f[2 * i], a_input.texcoord2f[2 * i + 1] };
+      Vertex vertex = { pos, color * 0.5f + 0.5f, tc };
+      vertices.push_back(vertex);
     }
-    meshes[a_meshId]->createMesh(vertices, indices);
+
+    std::unique_ptr<Mesh> mesh = std::make_unique<Mesh>(device);
+    if (indices.size() >= 1 << 16) {
+      std::vector<uint32_t> indices1(indices.size());
+      for (int i = 0; i < indices.size(); ++i) {
+        indices1[i] = i;
+      }
+      mesh->createMesh(vertices, indices1);
+    } else {
+      std::vector<uint16_t> indices1(indices.size());
+      for (int i = 0; i < indices.size(); ++i) {
+        indices1[i] = i;
+      }
+      mesh->createMesh(vertices, indices1);
+    }
+    meshes[a_meshId].addMesh(mesh);
   }
   createCommandBuffers();
 

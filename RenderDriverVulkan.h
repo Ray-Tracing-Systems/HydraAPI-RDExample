@@ -165,6 +165,22 @@ protected:
     }
   };
 
+  class HydraMesh {
+    std::vector<std::unique_ptr<Mesh>> meshes;
+  public:
+    void addMesh(std::unique_ptr<Mesh>& mesh) {
+      meshes.emplace_back(std::move(mesh));
+    }
+
+    Mesh* getMesh(int i) const {
+      return meshes[i].get();
+    }
+
+    uint32_t getMeshesCount() const {
+      return static_cast<uint32_t>(meshes.size());
+    }
+  };
+
   class Texture {
     VkDevice deviceRef;
 
@@ -335,7 +351,7 @@ protected:
   VkPipeline graphicsPipeline;
   VkCommandPool commandPool;
   size_t currentFrame = 0;
-  std::map<int, std::unique_ptr<Mesh>> meshes;
+  std::map<int, HydraMesh> meshes;
   std::vector<std::unique_ptr<InstancesCollection>> instances;
   std::vector<std::unique_ptr<Texture>> textures;
   std::unique_ptr<Texture> defaultTexture;
