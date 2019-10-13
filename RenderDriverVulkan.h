@@ -107,8 +107,8 @@ struct RD_Vulkan : public IHRRenderDriver
 
 protected:
   struct QueueFamilyIndices {
-    uint32_t graphicsFamily;
-    uint32_t presentFamily;
+    uint32_t graphicsFamily = 0;
+    uint32_t presentFamily = 0;
   };
 
   class Texture {
@@ -230,6 +230,7 @@ protected:
     VkDevice device;
     int swapchain_images = 0;
     const int MAX_INSTANCES = 128;
+    HydraLiteMath::float4 matColor;
 
     Texture *texture;
 
@@ -238,9 +239,9 @@ protected:
     void createDescriptorSets();
 
   public:
-    InstancesCollection(VkDevice dev, VkDescriptorSetLayout layout, Texture *tex, int mesh_id, int swapchain_im)
+    InstancesCollection(VkDevice dev, VkDescriptorSetLayout layout, Texture *tex, int mesh_id, int swapchain_im, HydraLiteMath::float4 color)
       : device(dev), descriptorSetLayout(layout), texture(tex),
-      meshId(mesh_id), swapchain_images(swapchain_im) {
+      meshId(mesh_id), swapchain_images(swapchain_im), matColor(color) {
       createUniformBuffers();
       createDescriptorPool();
       createDescriptorSets();

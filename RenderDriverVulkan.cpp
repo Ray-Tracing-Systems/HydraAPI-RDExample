@@ -86,7 +86,7 @@ struct Vertex {
 
 RD_Vulkan::QueueFamilyIndices RD_Vulkan::GetQueueFamilyIndex(VkPhysicalDevice physicalDevice)
 {
-  QueueFamilyIndices indices;
+  QueueFamilyIndices indices = {};
   uint32_t queueFamilyCount;
 
   vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, NULL);
@@ -1084,7 +1084,7 @@ void RD_Vulkan::createDescriptorSetLayout() {
 }
 
 void RD_Vulkan::InstancesCollection::createUniformBuffers() {
-  VkDeviceSize bufferSize = sizeof(float4x4) * MAX_INSTANCES;
+  VkDeviceSize bufferSize = sizeof(float4x4) * MAX_INSTANCES + sizeof(float4);
 
   uniformBuffers.resize(swapchain_images);
   uniformBuffersMemory.resize(swapchain_images);
@@ -1608,7 +1608,9 @@ void RD_Vulkan::InstancesCollection::updateUniformBuffer(uint32_t current_image,
   }
 
   void* data;
-  vkMapMemory(device, uniformBuffersMemory[current_image], 0, sizeof(resMatrices[0]) * resMatrices.size(), 0, &data);
+  vkMapMemory(device, uniformBuffersMemory[current_image], 0, sizeof(resMatrices[0]) * resMatrices.size() + sizeof(matColor), 0, &data);
+  memcpy(data, &matColor, sizeof(matColor));
+  data = reinterpret_cast<uint8_t*>(data) + sizeof(matColor);
   memcpy(data, resMatrices.data(), sizeof(resMatrices[0]) * resMatrices.size());
   vkUnmapMemory(device, uniformBuffersMemory[current_image]);
 }
@@ -1695,7 +1697,8 @@ void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32
     for (uint32_t i = 0; i < meshes[a_mesh_id].getMeshesCount(); ++i) {
       int materialId = meshes[a_mesh_id].getMesh(i)->getMaterialId();
       Texture* tex = materials[materialId].textureIdx != -1 ? textures[materials[materialId].textureIdx].get() : defaultTexture.get();
-      instances.back().push_back(std::make_unique<InstancesCollection>(device, descriptorSetLayout, tex, a_mesh_id, static_cast<int>(swapChainImages.size())));
+      float4 color = { materials[materialId].color.x, materials[materialId].color.y, materials[materialId].color.z, 1 };
+      instances.back().push_back(std::make_unique<InstancesCollection>(device, descriptorSetLayout, tex, a_mesh_id, static_cast<int>(swapChainImages.size()), color));
     }
     createCommandBuffers();
   }

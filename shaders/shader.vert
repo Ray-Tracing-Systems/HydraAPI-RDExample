@@ -9,11 +9,12 @@ layout(location = 0) out vec3 fragColor;
 layout(location = 1) out vec2 fragTexCoord;
 
 layout(binding = 0) uniform UniformBufferObject {
+  vec4 color;
   mat4 modelViewProj;
 } ubo;
 
 void main() {
     gl_Position = ubo.modelViewProj * vec4(inPosition, 1.0);
-    fragColor = inColor;
+    fragColor = ubo.color.rgb;
     fragTexCoord = inTexCoord;
 }
