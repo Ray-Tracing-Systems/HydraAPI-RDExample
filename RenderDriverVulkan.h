@@ -279,9 +279,11 @@ protected:
     void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
 
-    VkImageView createImageView(VkImage image, VkFormat format);
+    VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
     void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
       VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
+
+    VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
 
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
@@ -319,6 +321,8 @@ protected:
   void recreateSwapChain();
   void cleanupSwapChain();
   void createDefaultTexture();
+  void createDepthResources();
+  VkFormat findDepthFormat();
   QueueFamilyIndices GetQueueFamilyIndex(VkPhysicalDevice physicalDevice);
 
   void createDescriptorSetLayout();
@@ -366,6 +370,11 @@ protected:
   VkRenderPass renderPass;
   VkPipeline graphicsPipeline;
   VkCommandPool commandPool;
+
+  VkImage depthImage;
+  VkDeviceMemory depthImageMemory;
+  VkImageView depthImageView;
+
   size_t currentFrame = 0;
   std::map<int, HydraMesh> meshes;
   std::vector<std::vector<std::unique_ptr<InstancesCollection>>> instances;
