@@ -111,6 +111,34 @@ protected:
     uint32_t presentFamily;
   };
 
+  class Texture {
+    VkDevice deviceRef;
+
+    VkImage textureImage;
+    VkDeviceMemory textureImageMemory;
+    VkImageView textureImageView;
+    VkSampler textureSampler;
+
+    void createTextureImage(uint32_t width, uint32_t height, const uint8_t* image);
+    void createTextureImageView();
+    void createTextureSampler();
+  public:
+    Texture(VkDevice dev, uint32_t width, uint32_t height, const uint8_t* image) : deviceRef(dev) {
+      createTextureImage(width, height, image);
+      createTextureImageView();
+      createTextureSampler();
+    }
+
+    ~Texture();
+
+    VkDescriptorImageInfo getDescriptor() const;
+  };
+
+  struct Material {
+    int textureIdx = -1;
+    HydraLiteMath::float3 color;
+  };
+
   class Mesh {
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
@@ -118,6 +146,7 @@ protected:
     VkDeviceMemory indexBufferMemory;
     VkDevice device;
     uint32_t indicesCount;
+    int materialId = -1;
 
     void createVertexBuffer(const std::vector<Vertex>& vertices);
     template <typename T>
@@ -163,6 +192,14 @@ protected:
     uint32_t getIndicesCount() const {
       return indicesCount;
     }
+
+    void setMaterialId(int id) {
+      materialId = id;
+    }
+
+    int getMaterialId() const {
+      return materialId;
+    }
   };
 
   class HydraMesh {
@@ -181,28 +218,6 @@ protected:
     }
   };
 
-  class Texture {
-    VkDevice deviceRef;
-
-    VkImage textureImage;
-    VkDeviceMemory textureImageMemory;
-    VkImageView textureImageView;
-    VkSampler textureSampler;
-
-    void createTextureImage(uint32_t width, uint32_t height, const uint8_t* image);
-    void createTextureImageView();
-    void createTextureSampler();
-  public:
-    Texture(VkDevice dev, uint32_t width, uint32_t height, const uint8_t* image) : deviceRef(dev) {
-      createTextureImage(width, height, image);
-      createTextureImageView();
-      createTextureSampler();
-    }
-
-    ~Texture();
-
-    VkDescriptorImageInfo getDescriptor() const;
-  };
 
   class InstancesCollection {
     std::vector<UniformBufferObject> ubos;
@@ -352,9 +367,10 @@ protected:
   VkCommandPool commandPool;
   size_t currentFrame = 0;
   std::map<int, HydraMesh> meshes;
-  std::vector<std::unique_ptr<InstancesCollection>> instances;
+  std::vector<std::vector<std::unique_ptr<InstancesCollection>>> instances;
   std::vector<std::unique_ptr<Texture>> textures;
   std::unique_ptr<Texture> defaultTexture;
+  std::vector<Material> materials;
 };
 
 

@@ -992,10 +992,10 @@ void RD_Vulkan::createCommandBuffers() {
     vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
     for (auto &instance : instances) {
-      for (uint32_t j = 0; j < meshes[instance->getMeshId()].getMeshesCount(); ++j) {
-        Mesh* mesh = meshes[instance->getMeshId()].getMesh(j);
+      for (int j = 0; j < instance.size(); ++j) {
+        Mesh* mesh = meshes[instance[j]->getMeshId()].getMesh(j);
         mesh->bind(commandBuffers[i]);
-        instance->bind(commandBuffers[i], pipelineLayout, i);
+        instance[j]->bind(commandBuffers[i], pipelineLayout, i);
         vkCmdDrawIndexed(commandBuffers[i], mesh->getIndicesCount(), 1, 0, 0, 0);
       }
     }
@@ -1292,11 +1292,11 @@ bool RD_Vulkan::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, 
   if (a_data == nullptr) 
     return false; 
 
-	uint8_t *convertedData = nullptr;
+	std::vector<uint8_t> convertedData;
 	
 	if (bpp > 4) // well, perhaps this is not error, we just don't support hdr textures in this render
 	{
-		convertedData = new uint8_t[w*h*bpp/sizeof(float)];
+		convertedData.resize(w * h * bpp / sizeof(float));
 
 		#pragma omp parallel for
 		for (int y = 0; y < h; y++)
@@ -1316,10 +1316,11 @@ bool RD_Vulkan::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, 
 		}
 	}
 
-	if (bpp > 4) 
-    delete [] convertedData;
+  if (a_texId >= textures.size()) {
+    textures.resize(a_texId + 1);
+  }
+  textures[a_texId] = std::make_unique<Texture>(device, w, h, reinterpret_cast<const uint8_t*>(a_data));
 
-  //textures.push_back(std::make_unique<Texture>(device));
   return true;
 }
 
@@ -1327,7 +1328,7 @@ bool RD_Vulkan::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, 
 bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
 {
   pugi::xml_node clrNode = a_materialNode.child(L"diffuse").child(L"color");
-  pugi::xml_node texNode = a_materialNode.child(L"diffuse").child(L"texture");
+  pugi::xml_node texNode = clrNode.child(L"texture");
   pugi::xml_node mtxNode = a_materialNode.child(L"diffuse").child(L"sampler").child(L"matrix");
 
   if (clrNode == nullptr)
@@ -1354,10 +1355,21 @@ bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
     }
   }
 
-  if (texNode != nullptr)
+  if (materials.size() <= a_matId) {
+    materials.resize(a_matId + 1);
+  }
+
+  materials[a_matId].color.x = m_diffColors[a_matId * 3 + 0];
+  materials[a_matId].color.y = m_diffColors[a_matId * 3 + 1];
+  materials[a_matId].color.z = m_diffColors[a_matId * 3 + 2];
+
+  if (texNode != nullptr) {
     m_diffTexId[a_matId] = texNode.attribute(L"id").as_int();
-  else
+    materials[a_matId].textureIdx = m_diffTexId[a_matId];
+  } else {
     m_diffTexId[a_matId] = -1;
+    materials[a_matId].textureIdx = -1;
+  }
 
   return true;
 }
@@ -1476,6 +1488,7 @@ bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HR
       indices.push_back(a_input.indices[i * 3 + 2]);
     }
     std::vector<Vertex> vertices;
+    int matNum = a_input.triMatIndices[begins[matId]];
     for (uint32_t i : indices) {
       float3 pos = { a_input.pos4f[4 * i], a_input.pos4f[4 * i + 1], a_input.pos4f[4 * i + 2] };
       float3 color = { a_input.norm4f[4 * i], a_input.norm4f[4 * i + 1], a_input.norm4f[4 * i + 2] };
@@ -1498,6 +1511,7 @@ bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HR
       }
       mesh->createMesh(vertices, indices1);
     }
+    mesh->setMaterialId(matNum);
     meshes[a_meshId].addMesh(mesh);
   }
   createCommandBuffers();
@@ -1610,7 +1624,9 @@ void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
   proj.M(1, 1) *= -1.f;
 
   for (auto& instance : instances) {
-    instance->updateUniformBuffer(current_image, view, proj);
+    for (auto& sub_inst : instance) {
+      sub_inst->updateUniformBuffer(current_image, view, proj);
+    }
   }
 }
 
@@ -1652,7 +1668,7 @@ void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32
 {
   int instancesId = 0;
   for (; instancesId < instances.size(); ++instancesId) {
-    if (a_mesh_id == instances[instancesId]->getMeshId()) {
+    if (a_mesh_id == instances[instancesId][0]->getMeshId()) {
       break;
     }
   }
@@ -1664,16 +1680,29 @@ void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32
     models[i] = float4x4(matrixT2);
   }
 
-  if (instancesId != instances.size() && instances[instancesId]->instancesUpdated(models)) {
-    return;
+  if (instancesId != instances.size()) {
+    bool subInstUpdate = true;
+    for (uint32_t i = 0; i < instances[instancesId].size(); ++i) {
+      subInstUpdate &= instances[instancesId][i]->instancesUpdated(models);
+    }
+    if (subInstUpdate) {
+      return;
+    }
   }
 
   if (instancesId == instances.size()) {
-    instances.push_back(std::make_unique<InstancesCollection>(device, descriptorSetLayout, defaultTexture.get(), a_mesh_id, static_cast<int>(swapChainImages.size())));
+    instances.resize(instances.size() + 1);
+    for (uint32_t i = 0; i < meshes[a_mesh_id].getMeshesCount(); ++i) {
+      int materialId = meshes[a_mesh_id].getMesh(i)->getMaterialId();
+      Texture* tex = materials[materialId].textureIdx != -1 ? textures[materials[materialId].textureIdx].get() : defaultTexture.get();
+      instances.back().push_back(std::make_unique<InstancesCollection>(device, descriptorSetLayout, tex, a_mesh_id, static_cast<int>(swapChainImages.size())));
+    }
     createCommandBuffers();
   }
 
-  instances[instancesId]->updateInstances(models);
+  for (uint32_t i = 0; i < instances[instancesId].size(); ++i) {
+    instances[instancesId][i]->updateInstances(models);
+  }
 }
 
 

@@ -143,7 +143,7 @@ int main(int argc, const char** argv)
   
   try
   {
-    window_main_free_look_vulkan(L"data/testscenes/test_42", L"vulkan");
+    window_main_free_look_vulkan(L"data/testscenes/test_35", L"vulkan");
     //window_main_free_look(L"data/testscenes/test_42", L"opengl1");
   }
   catch (std::runtime_error& e)
