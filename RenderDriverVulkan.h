@@ -282,7 +282,7 @@ protected:
     void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels);
 
     VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels);
-    void createImage(uint32_t width, uint32_t height, uint32_t mip_levels, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
+    void createImage(uint32_t width, uint32_t height, uint32_t mip_levels, VkSampleCountFlagBits numSamples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
       VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
 
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
@@ -324,8 +324,10 @@ protected:
   void cleanupSwapChain();
   void createDefaultTexture();
   void createDepthResources();
+  void createColorResources();
   VkFormat findDepthFormat();
   QueueFamilyIndices GetQueueFamilyIndex(VkPhysicalDevice physicalDevice);
+  VkSampleCountFlagBits getMaxUsableSampleCount();
 
   void createDescriptorSetLayout();
   void updateUniformBuffer(uint32_t current_image);
@@ -372,10 +374,15 @@ protected:
   VkRenderPass renderPass;
   VkPipeline graphicsPipeline;
   VkCommandPool commandPool;
+  VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
   VkImage depthImage;
   VkDeviceMemory depthImageMemory;
   VkImageView depthImageView;
+
+  VkImage colorImage;
+  VkDeviceMemory colorImageMemory;
+  VkImageView colorImageView;
 
   size_t currentFrame = 0;
   std::map<int, HydraMesh> meshes;
