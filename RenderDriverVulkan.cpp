@@ -1775,11 +1775,30 @@ bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HR
 
 void RD_Vulkan::BeginScene(pugi::xml_node a_sceneNode)
 {
-  if (camUseMatrices)
+  allRemapLists.clear();
+  tableOffsetsAndSize.clear();
+
+  pugi::xml_node remapLists = a_sceneNode.child(L"remap_lists");
+  if (remapLists != nullptr)
   {
-  }
-  else
-  {
+    for (pugi::xml_node listNode : remapLists.children())
+    {
+      const wchar_t* inputStr = listNode.attribute(L"val").as_string();
+      const int listSize = listNode.attribute(L"size").as_int();
+      std::wstringstream inStrStream(inputStr);
+
+      tableOffsetsAndSize.push_back(int2(int(allRemapLists.size()), listSize));
+
+      for (int i = 0; i < listSize; i++)
+      {
+        if (inStrStream.eof())
+          break;
+
+        int data;
+        inStrStream >> data;
+        allRemapLists.push_back(data);
+      }
+    }
   }
 }
 
@@ -1932,6 +1951,16 @@ void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32
     instances.resize(instances.size() + 1);
     for (uint32_t i = 0; i < meshes[a_mesh_id].getMeshesCount(); ++i) {
       int materialId = meshes[a_mesh_id].getMesh(i)->getMaterialId();
+      if (a_remapId[0] != -1) {
+        const int jBegin = tableOffsetsAndSize[a_remapId[0]].x;
+        const int jEnd = tableOffsetsAndSize[a_remapId[0]].x + tableOffsetsAndSize[a_remapId[0]].y;
+        for (int j = jBegin; j < jEnd; j += 2) {
+          if (allRemapLists[j] == materialId) {
+            materialId = allRemapLists[j + 1];
+            break;
+          }
+        }
+      }
       Texture* tex = materials[materialId].textureIdx != -1 ? textures[materials[materialId].textureIdx].get() : defaultTexture.get();
       float4 color = { materials[materialId].color.x, materials[materialId].color.y, materials[materialId].color.z, 1 };
       instances.back().push_back(std::make_unique<InstancesCollection>(device, descriptorSetLayout, tex, a_mesh_id, static_cast<int>(swapChainImages.size()), color));

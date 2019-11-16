@@ -350,6 +350,9 @@ protected:
   HydraLiteMath::float4x4 camProjMatrixTransposed;
   bool                    camUseMatrices;
 
+  std::vector<int>  allRemapLists;
+  std::vector<HydraLiteMath::int2> tableOffsetsAndSize;
+
   std::vector<float> m_diffColors;
   std::vector<int>   m_diffTexId;
   VkInstance vk_inst;
