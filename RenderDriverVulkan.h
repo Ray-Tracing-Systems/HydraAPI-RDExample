@@ -141,13 +141,46 @@ protected:
   };
 
   class Mesh {
+    VkBuffer vertexBuffer = {};
+    VkBuffer indexBuffer = {};
+    uint32_t indicesOffset = 0, indicesCount = 0;
+    int materialId = -1;
+
+  public:
+    Mesh() {}
+    Mesh(uint32_t indicesOffset, uint32_t indicesCount) :
+      indicesOffset(indicesOffset),
+      indicesCount(indicesCount)
+    {}
+
+    void bind(VkCommandBuffer command_buffer) const;
+
+    void setBuffers(VkBuffer vertex_buffer, VkBuffer index_buffer) {
+      vertexBuffer = vertex_buffer;
+      indexBuffer = index_buffer;
+    }
+
+    uint32_t getIndicesCount() const {
+      return indicesCount;
+    }
+
+    void setMaterialId(int id) {
+      materialId = id;
+    }
+
+    int getMaterialId() const {
+      return materialId;
+    }
+  };
+
+  class HydraMesh {
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
     VkBuffer indexBuffer;
     VkDeviceMemory indexBufferMemory;
     VkDevice device;
-    uint32_t indicesCount;
-    int materialId = -1;
+
+    std::vector<Mesh> meshes;
 
     void createVertexBuffer(const std::vector<Vertex>& vertices);
     template <typename T>
@@ -170,10 +203,15 @@ protected:
       vkDestroyBuffer(device, stagingBuffer, nullptr);
       vkFreeMemory(device, stagingBufferMemory, nullptr);
     }
-  public:
-    Mesh(VkDevice dev) : device(dev) {}
 
-    ~Mesh() {
+  public:
+    template <typename T>
+    HydraMesh(VkDevice dev, const std::vector<Vertex>& vertices, const std::vector<T>& indices) : device(dev) {
+      createVertexBuffer(vertices);
+      createIndexBuffer(indices);
+    }
+
+    ~HydraMesh() {
       vkDestroyBuffer(device, indexBuffer, nullptr);
       vkFreeMemory(device, indexBufferMemory, nullptr);
 
@@ -181,37 +219,13 @@ protected:
       vkFreeMemory(device, vertexBufferMemory, nullptr);
     }
 
-    template <typename T>
-    void createMesh(const std::vector<Vertex>& vertices, const std::vector<T>& indices) {
-      createVertexBuffer(vertices);
-      createIndexBuffer(indices);
-      indicesCount = static_cast<uint32_t>(indices.size());
-    }
-
-    void bind(VkCommandBuffer command_buffer);
-
-    uint32_t getIndicesCount() const {
-      return indicesCount;
-    }
-
-    void setMaterialId(int id) {
-      materialId = id;
-    }
-
-    int getMaterialId() const {
-      return materialId;
-    }
-  };
-
-  class HydraMesh {
-    std::vector<std::unique_ptr<Mesh>> meshes;
-  public:
-    void addMesh(std::unique_ptr<Mesh>& mesh) {
+    void addMesh(Mesh mesh) {
       meshes.emplace_back(std::move(mesh));
+      meshes.back().setBuffers(vertexBuffer, indexBuffer);
     }
 
-    Mesh* getMesh(int i) const {
-      return meshes[i].get();
+    const Mesh& getMesh(int i) const {
+      return meshes[i];
     }
 
     uint32_t getMeshesCount() const {
@@ -388,7 +402,7 @@ protected:
   VkImageView colorImageView;
 
   size_t currentFrame = 0;
-  std::map<int, HydraMesh> meshes;
+  std::map<int, std::unique_ptr<HydraMesh>> meshes;
   std::vector<std::vector<std::unique_ptr<InstancesCollection>>> instances;
   std::vector<std::unique_ptr<Texture>> textures;
   std::unique_ptr<Texture> defaultTexture;

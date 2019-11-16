@@ -488,7 +488,7 @@ void RD_Vulkan::BufferManager::createBuffer(VkDeviceSize size, VkBufferUsageFlag
   vkBindBufferMemory(deviceRef, buffer, bufferMemory, 0);
 }
 
-void RD_Vulkan::Mesh::createVertexBuffer(const std::vector<Vertex>& vertices) {
+void RD_Vulkan::HydraMesh::createVertexBuffer(const std::vector<Vertex>& vertices) {
   VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
   VkBuffer stagingBuffer;
@@ -912,12 +912,12 @@ void RD_Vulkan::createCommandPool() {
   VK_CHECK_RESULT(vkCreateCommandPool(device, &commandPoolCreateInfo, nullptr, &commandPool));
 }
 
-void RD_Vulkan::Mesh::bind(VkCommandBuffer command_buffer) {
+void RD_Vulkan::Mesh::bind(VkCommandBuffer command_buffer) const {
   VkBuffer vertexBuffers[] = { vertexBuffer };
   VkDeviceSize offsets[] = { 0 };
   vkCmdBindVertexBuffers(command_buffer, 0, 1, vertexBuffers, offsets);
 
-  vkCmdBindIndexBuffer(command_buffer, indexBuffer, 0, (indicesCount >= 1 << 16) ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
+  vkCmdBindIndexBuffer(command_buffer, indexBuffer, indicesOffset * sizeof(uint32_t), VK_INDEX_TYPE_UINT32);
 }
 
 void RD_Vulkan::InstancesCollection::bind(VkCommandBuffer command_buffer, VkPipelineLayout layout, int idx) {
@@ -1159,10 +1159,10 @@ void RD_Vulkan::createCommandBuffers() {
 
     for (auto &instance : instances) {
       for (int j = 0; j < instance.size(); ++j) {
-        Mesh* mesh = meshes[instance[j]->getMeshId()].getMesh(j);
-        mesh->bind(commandBuffers[i]);
+        const Mesh &mesh = meshes[instance[j]->getMeshId()]->getMesh(j);
+        mesh.bind(commandBuffers[i]);
         instance[j]->bind(commandBuffers[i], pipelineLayout, i);
-        vkCmdDrawIndexed(commandBuffers[i], mesh->getIndicesCount(), 1, 0, 0, 0);
+        vkCmdDrawIndexed(commandBuffers[i], mesh.getIndicesCount(), 1, 0, 0, 0);
       }
     }
     vkCmdEndRenderPass(commandBuffers[i]);
@@ -1717,39 +1717,23 @@ bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HR
   }
   begins.push_back(a_input.triNum);
 
-  for (int matId = 0; matId < begins.size() - 1; ++matId) {
-    std::vector<uint32_t> indices;
-    for (uint32_t i = begins[matId]; i < begins[matId + 1]; ++i) {
-      indices.push_back(a_input.indices[i * 3]);
-      indices.push_back(a_input.indices[i * 3 + 1]);
-      indices.push_back(a_input.indices[i * 3 + 2]);
-    }
-    std::vector<Vertex> vertices;
-    int matNum = a_input.triMatIndices[begins[matId]];
-    for (uint32_t i : indices) {
-      float3 pos = { a_input.pos4f[4 * i], a_input.pos4f[4 * i + 1], a_input.pos4f[4 * i + 2] };
-      float3 color = { a_input.norm4f[4 * i], a_input.norm4f[4 * i + 1], a_input.norm4f[4 * i + 2] };
-      float2 tc = { a_input.texcoord2f[2 * i], a_input.texcoord2f[2 * i + 1] };
-      Vertex vertex = { pos, color * 0.5f + 0.5f, tc };
-      vertices.push_back(vertex);
-    }
+  std::vector<uint32_t> indices(a_input.indices, a_input.indices + a_input.triNum * 3);
+  std::vector<Vertex> vertices;
+  for (int i = 0; i < a_input.vertNum; ++i) {
+    float3 pos = { a_input.pos4f[4 * i], a_input.pos4f[4 * i + 1], a_input.pos4f[4 * i + 2] };
+    float3 color = { a_input.norm4f[4 * i], a_input.norm4f[4 * i + 1], a_input.norm4f[4 * i + 2] };
+    float2 tc = { a_input.texcoord2f[2 * i], a_input.texcoord2f[2 * i + 1] };
+    Vertex vertex = { pos, color * 0.5f + 0.5f, tc };
+    vertices.push_back(vertex);
+  }
 
-    std::unique_ptr<Mesh> mesh = std::make_unique<Mesh>(device);
-    if (indices.size() >= 1 << 16) {
-      std::vector<uint32_t> indices1(indices.size());
-      for (int i = 0; i < indices.size(); ++i) {
-        indices1[i] = i;
-      }
-      mesh->createMesh(vertices, indices1);
-    } else {
-      std::vector<uint16_t> indices1(indices.size());
-      for (int i = 0; i < indices.size(); ++i) {
-        indices1[i] = i;
-      }
-      mesh->createMesh(vertices, indices1);
-    }
-    mesh->setMaterialId(matNum);
-    meshes[a_meshId].addMesh(mesh);
+  meshes[a_meshId] = std::make_unique<HydraMesh>(device, vertices, indices);
+
+  for (int matId = 0; matId < begins.size() - 1; ++matId) {
+    Mesh mesh(begins[matId] * 3, (begins[matId + 1] - begins[matId]) * 3);
+    const int matNum = a_input.triMatIndices[begins[matId]];
+    mesh.setMaterialId(matNum);
+    meshes[a_meshId]->addMesh(mesh);
   }
   createCommandBuffers();
 
@@ -1949,8 +1933,8 @@ void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32
 
   if (instancesId == instances.size()) {
     instances.resize(instances.size() + 1);
-    for (uint32_t i = 0; i < meshes[a_mesh_id].getMeshesCount(); ++i) {
-      int materialId = meshes[a_mesh_id].getMesh(i)->getMaterialId();
+    for (uint32_t i = 0; i < meshes[a_mesh_id]->getMeshesCount(); ++i) {
+      int materialId = meshes[a_mesh_id]->getMesh(i).getMaterialId();
       if (a_remapId[0] != -1) {
         const int jBegin = tableOffsetsAndSize[a_remapId[0]].x;
         const int jEnd = tableOffsetsAndSize[a_remapId[0]].x + tableOffsetsAndSize[a_remapId[0]].y;
@@ -1962,7 +1946,8 @@ void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32
         }
       }
       Texture* tex = materials[materialId].textureIdx != -1 ? textures[materials[materialId].textureIdx].get() : defaultTexture.get();
-      float4 color = { materials[materialId].color.x, materials[materialId].color.y, materials[materialId].color.z, 1 };
+      const float3& col = materials[materialId].color;
+      float4 color = { col.x, col.y, col.z, 1 };
       instances.back().push_back(std::make_unique<InstancesCollection>(device, descriptorSetLayout, tex, a_mesh_id, static_cast<int>(swapChainImages.size()), color));
     }
     createCommandBuffers();
