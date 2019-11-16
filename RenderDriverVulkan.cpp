@@ -1,3 +1,7 @@
+// This is a personal academic project. Dear PVS-Studio, please check it.
+
+// PVS-Studio Static Code Analyzer for C, C++, C#, and Java: http://www.viva64.com
+
 #include <cassert>
 
 #include <array>
@@ -84,7 +88,7 @@ struct Vertex {
   }
 };
 
-RD_Vulkan::QueueFamilyIndices RD_Vulkan::GetQueueFamilyIndex(VkPhysicalDevice physicalDevice)
+RD_Vulkan::QueueFamilyIndices RD_Vulkan::GetQueueFamilyIndex()
 {
   QueueFamilyIndices indices = {};
   uint32_t queueFamilyCount;
@@ -118,7 +122,7 @@ RD_Vulkan::QueueFamilyIndices RD_Vulkan::GetQueueFamilyIndex(VkPhysicalDevice ph
 
 void RD_Vulkan::createLogicalDevice()
 {
-  QueueFamilyIndices indices = GetQueueFamilyIndex(physicalDevice);
+  QueueFamilyIndices indices = GetQueueFamilyIndex();
 
   std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
   std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily, indices.presentFamily };
@@ -155,7 +159,7 @@ void RD_Vulkan::createLogicalDevice()
   }
   VK_CHECK_RESULT(vkCreateDevice(physicalDevice, &createInfo, NULL, &device));
 
-  vkGetDeviceQueue(device, GetQueueFamilyIndex(physicalDevice).graphicsFamily, 0, &graphicsQueue);
+  vkGetDeviceQueue(device, GetQueueFamilyIndex().graphicsFamily, 0, &graphicsQueue);
 }
 
 struct SwapChainSupportDetails {
@@ -841,7 +845,7 @@ void RD_Vulkan::createSwapChain() {
   createInfo.imageArrayLayers = 1;
   createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-  QueueFamilyIndices indices = GetQueueFamilyIndex(physicalDevice);
+  QueueFamilyIndices indices = GetQueueFamilyIndex();
   uint32_t queueFamilyIndices[] = { indices.graphicsFamily, indices.presentFamily };
 
   if (indices.graphicsFamily != indices.presentFamily) {
@@ -903,7 +907,7 @@ void RD_Vulkan::createFramebuffers() {
 void RD_Vulkan::createCommandPool() {
   VkCommandPoolCreateInfo commandPoolCreateInfo;
   commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-  commandPoolCreateInfo.queueFamilyIndex = GetQueueFamilyIndex(physicalDevice).graphicsFamily;
+  commandPoolCreateInfo.queueFamilyIndex = GetQueueFamilyIndex().graphicsFamily;
   commandPoolCreateInfo.flags = 0;
   VK_CHECK_RESULT(vkCreateCommandPool(device, &commandPoolCreateInfo, nullptr, &commandPool));
 }
@@ -1575,7 +1579,7 @@ bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
     else
       clrStr = clrNode.text().as_string();
 
-    if (std::wstring(clrStr) != L"")
+    if (!std::wstring(clrStr).empty())
     {
       float color[3];
       std::wstringstream input(clrStr);
@@ -1591,9 +1595,10 @@ bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
     materials.resize(a_matId + 1);
   }
 
-  materials[a_matId].color.x = m_diffColors[a_matId * 3 + 0];
-  materials[a_matId].color.y = m_diffColors[a_matId * 3 + 1];
-  materials[a_matId].color.z = m_diffColors[a_matId * 3 + 2];
+  float3& color = materials[a_matId].color;
+  color.x = m_diffColors[a_matId * 3 + 0];
+  color.y = m_diffColors[a_matId * 3 + 1];
+  color.z = m_diffColors[a_matId * 3 + 2];
 
   if (texNode != nullptr) {
     m_diffTexId[a_matId] = texNode.attribute(L"id").as_int();
@@ -1655,19 +1660,19 @@ bool RD_Vulkan::UpdateCamera(pugi::xml_node a_camNode)
   if (!a_camNode.child(L"farClipPlane").text().empty())
     camFarPlane = a_camNode.child(L"farClipPlane").text().as_float();
 
-  if (std::wstring(camPosStr) != L"")
+  if (!std::wstring(camPosStr).empty())
   {
     std::wstringstream input(camPosStr);
     input >> camPos[0] >> camPos[1] >> camPos[2];
   }
 
-  if (std::wstring(camLAtStr) != L"")
+  if (!std::wstring(camLAtStr).empty())
   {
     std::wstringstream input(camLAtStr);
     input >> camLookAt[0] >> camLookAt[1] >> camLookAt[2];
   }
 
-  if (std::wstring(camUpStr) != L"")
+  if (!std::wstring(camUpStr).empty())
   {
     std::wstringstream input(camUpStr);
     input >> camUp[0] >> camUp[1] >> camUp[2];
@@ -1879,10 +1884,9 @@ bool RD_Vulkan::InstancesCollection::instancesUpdated(const std::vector<float4x4
   }
   for (int i = 0; i < models.size(); ++i) {
     for (int j = 0; j < 4; ++j) {
-      if (models[i].row[j].x != ubos[i].getModel().row[j].x
-        || models[i].row[j].y != ubos[i].getModel().row[j].y
-        || models[i].row[j].z != ubos[i].getModel().row[j].z
-        || models[i].row[j].w != ubos[i].getModel().row[j].w) {
+      const float4& newRow = models[i].row[j];
+      const float4& oldRow = ubos[i].getModel().row[j];
+      if (newRow.x != oldRow.x || newRow.y != oldRow.y || newRow.z != oldRow.z || newRow.w != oldRow.w) {
         return true;
       }
     }

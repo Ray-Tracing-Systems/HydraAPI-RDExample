@@ -38,7 +38,7 @@ public:
     model = m;
   }
 
-  void setView(const HydraLiteMath::float3 eye, const HydraLiteMath::float3 center, const HydraLiteMath::float3 up) {
+  void setView(const HydraLiteMath::float3& eye, const HydraLiteMath::float3& center, const HydraLiteMath::float3& up) {
     view = lookAtTransposed(eye, center, up);
   }
 
@@ -326,7 +326,7 @@ protected:
   void createDepthResources();
   void createColorResources();
   VkFormat findDepthFormat();
-  QueueFamilyIndices GetQueueFamilyIndex(VkPhysicalDevice physicalDevice);
+  QueueFamilyIndices GetQueueFamilyIndex();
   VkSampleCountFlagBits getMaxUsableSampleCount();
 
   void createDescriptorSetLayout();
