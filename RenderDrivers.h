@@ -3,6 +3,7 @@
 
 #include "RenderDriverOpenGL1.h"
 #include "RenderDriverVulkan.h"
+#include "RenderDriverFormFactorIntegrator.h"
 
 IHRRenderDriver* CreateOpenGL1_RenderDriver();
 
@@ -12,5 +13,9 @@ void printAllAvailableDrivers();
 IHRRenderDriver* CreateVulkan_RenderDriver();
 
 void registerAllVulkanDrivers();
+
+void registerAllFFIntegratorDrivers();
+
+IHRRenderDriver* CreateFFIntegrator_RenderDriver();
 
 #endif //RENDERDRIVERS_H

@@ -50,6 +50,31 @@ void registerAllVulkanDrivers()
   registerVulkanPlainDriver();
 }
 
+void registerFFIntegratorDrivers()
+{
+  HRDriverInfo integrator_info;
+  integrator_info.supportHDRFrameBuffer = false;
+  integrator_info.supportHDRTextures = false;
+  integrator_info.supportMultiMaterialInstance = false;
+
+  integrator_info.supportImageLoadFromInternalFormat = false;
+  integrator_info.supportImageLoadFromExternalFormat = false;
+  integrator_info.supportMeshLoadFromInternalFormat = false;
+  integrator_info.supportLighting = false;
+
+  integrator_info.memTotal = int64_t(8) * int64_t(1024 * 1024 * 1024);
+
+  integrator_info.driverName = L"ff_integrator";
+  integrator_info.createFunction = CreateFFIntegrator_RenderDriver;
+
+  RenderDriverFactory::Register(L"ff_integrator", integrator_info);
+}
+
+void registerAllFFIntegratorDrivers()
+{
+  registerFFIntegratorDrivers();
+}
+
 void printAllAvailableDrivers()
 {
   auto drivers = RenderDriverFactory::GetListOfRegisteredDrivers();

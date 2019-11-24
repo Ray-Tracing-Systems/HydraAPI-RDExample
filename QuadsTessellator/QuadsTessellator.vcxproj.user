@@ -1,11 +1,11 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <LocalDebuggerCommandArguments>-in_dir ../DiffuseReference/01_CornellBoxEmpty/scenelib -out_dir ../DiffuseReference/01_CornellBoxEmpty/tessellated -tess 10</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>-in_dir ../../Diser/DiffuseReference/01_CornellBoxEmpty/scenelib -out_dir ../../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated -tess 2</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <LocalDebuggerCommandArguments>-in_dir ../DiffuseReference/01_CornellBoxEmpty/scenelib -out_dir ../DiffuseReference/01_CornellBoxEmpty/tessellated -tess 10</LocalDebuggerCommandArguments>
+    <LocalDebuggerCommandArguments>-in_dir ../../Diser/DiffuseReference/01_CornellBoxEmpty/scenelib -out_dir ../../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated -tess 2</LocalDebuggerCommandArguments>
     <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
 </Project>

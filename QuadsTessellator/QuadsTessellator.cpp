@@ -48,19 +48,11 @@ void genQuad(std::vector<T>& res, std::array<T, 4>& points, int x, int y, float 
 std::wstring s2ws(const std::string& str)
 {
   return std::wstring(str.begin(), str.end());
-  /*using convert_typeX = std::codecvt_utf8<wchar_t>;
-  std::wstring_convert<convert_typeX, wchar_t> converterX;
-
-  return converterX.from_bytes(str);*/
 }
 
 std::string ws2s(const std::wstring& wstr)
 {
   return std::string(wstr.begin(), wstr.end());
-  //using convert_typeX = std::codecvt_utf8<wchar_t>;
-  //std::wstring_convert<convert_typeX, wchar_t> converterX;
-
-  //return converterX.to_bytes(wstr);
 }
 
 HydraGeomData MeshTessellation(const std::wstring& input, const std::wstring& output, int tessFactor) {

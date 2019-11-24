@@ -42,6 +42,9 @@ void window_main_free_look(const wchar_t* a_libPath, const wchar_t* a_renderName
 void window_main_free_look_vulkan(const wchar_t* a_libPath, const wchar_t* a_renderName,
                            InitFuncType a_pInitFunc = nullptr, DrawFuncType a_pDrawFunc = nullptr);
 
+void window_main_ff_integrator(const wchar_t* a_libPath, const wchar_t* a_renderName,
+  InitFuncType a_pInitFunc = nullptr, DrawFuncType a_pDrawFunc = nullptr);
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////// GLFW
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////// GLFW
 
@@ -96,6 +99,7 @@ int main(int argc, const char** argv)
 {
   registerAllVulkanDrivers();
   registerAllGL1Drivers();
+  registerAllFFIntegratorDrivers();
 
   hrInfoCallback(&InfoCallBack);
   hrErrorCallerPlace(L"main");  // for debug needs only
@@ -143,8 +147,9 @@ int main(int argc, const char** argv)
   
   try
   {
+    window_main_ff_integrator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"ff_integrator");
     //window_main_free_look_vulkan(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"vulkan");
-    window_main_free_look_vulkan(L"data/testscenes/test_35", L"vulkan");
+    //window_main_free_look_vulkan(L"data/testscenes/test_35", L"vulkan");
     //window_main_free_look(L"data/testscenes/test_42", L"opengl1");
   }
   catch (std::runtime_error& e)
