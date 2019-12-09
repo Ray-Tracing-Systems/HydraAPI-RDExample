@@ -13,6 +13,11 @@
 
 using namespace HydraLiteMath;
 
+static HRRenderRef  renderRef;
+static HRCameraRef  camRef;
+static HRSceneInstRef scnRef;
+static std::unordered_map<std::wstring, std::wstring> camParams;
+
 IHRRenderDriver* CreateFFIntegrator_RenderDriver()
 {
   return new RD_FFIntegrator;
@@ -40,7 +45,7 @@ static std::vector<RD_FFIntegrator::Quad> gen_quads(const HRMeshDriverInput& a_i
   const bool hasTangent = a_input.tan4f;
   const bool hasNormals = a_input.norm4f;
 
-  for (int i = 0; i < a_input.triNum * 3; i += 3) {
+  for (size_t i = 0, ie = (size_t)a_input.triNum * 3; i < ie; i += 3) {
     RD_FFIntegrator::Triangle tri;
     if (hasTangent) {
       tri.tangent.emplace(std::array<float4, 3>());
@@ -48,8 +53,8 @@ static std::vector<RD_FFIntegrator::Quad> gen_quads(const HRMeshDriverInput& a_i
     if (hasNormals) {
       tri.normal.emplace(std::array<float4, 3>());
     }
-    for (int j = 0; j < 3; ++j) {
-      const uint32_t index = indices[i + j];
+    for (size_t j = 0; j < 3; ++j) {
+      const size_t index = (size_t)indices[i + j];
       tri.points[j] = positions[index];
       tri.texCoords[j] = texCoords[index];
       if (hasNormals) {
@@ -64,7 +69,7 @@ static std::vector<RD_FFIntegrator::Quad> gen_quads(const HRMeshDriverInput& a_i
   }
 
   std::vector<int> cornerPoints(triangles.size(), 0);
-  for (int i = 0; i < cornerPoints.size(); ++i) {
+  for (size_t i = 0; i < cornerPoints.size(); ++i) {
     float4 v1 = triangles[i].points[1] - triangles[i].points[0];
     float4 v2 = triangles[i].points[2] - triangles[i].points[0];
     if (dot3(v1, v2) < 1e-5) {
@@ -87,8 +92,8 @@ static std::vector<RD_FFIntegrator::Quad> gen_quads(const HRMeshDriverInput& a_i
   }
 
   std::vector<RD_FFIntegrator::Quad> quads;
-  for (int i = 0; i < triangles.size(); ++i) {
-    for (int j = i + 1; j < triangles.size(); ++j) {
+  for (size_t i = 0; i < triangles.size(); ++i) {
+    for (size_t j = i + 1; j < triangles.size(); ++j) {
       if (triangles[i].materialId != triangles[j].materialId) {
         continue;
       }
@@ -106,12 +111,12 @@ static std::vector<RD_FFIntegrator::Quad> gen_quads(const HRMeshDriverInput& a_i
         std::array<std::pair<int, int>, 4> indices = { std::make_pair(i, cornerPoints[i]), std::make_pair(i, t1Next),
           std::make_pair(j, cornerPoints[j]), std::make_pair(i, t1Prev) };
         if (hasNormals) {
-          q.normal.emplace(std::array<float4, 4>());
+          q.normal.emplace(std::array<float4, RD_FFIntegrator::Quad::POINTS_COUNT>());
         }
         if (hasTangent) {
-          q.tangent.emplace(std::array<float4, 4>());
+          q.tangent.emplace(std::array<float4, RD_FFIntegrator::Quad::POINTS_COUNT>());
         }
-        for (int k = 0; k < 4; ++k) {
+        for (size_t k = 0; k < RD_FFIntegrator::Quad::POINTS_COUNT; ++k) {
           q.points[k] = triangles[indices[k].first].points[indices[k].second];
           q.texCoords[k] = triangles[indices[k].first].texCoords[indices[k].second];
           if (hasNormals) {
@@ -357,12 +362,12 @@ public:
       for (int j = 0; j < 4; ++j) {
         points[i * 4 + j] = make_float3(quads[i].points[j]);
       }
-      indices[i * 4 + 0] = i * 4 + 0;
-      indices[i * 4 + 1] = i * 4 + 1;
-      indices[i * 4 + 2] = i * 4 + 2;
-      indices[i * 4 + 3] = i * 4 + 0;
-      indices[i * 4 + 4] = i * 4 + 2;
-      indices[i * 4 + 5] = i * 4 + 3;
+      indices[i * 6 + 0] = i * 4 + 0;
+      indices[i * 6 + 1] = i * 4 + 1;
+      indices[i * 6 + 2] = i * 4 + 2;
+      indices[i * 6 + 3] = i * 4 + 0;
+      indices[i * 6 + 4] = i * 4 + 2;
+      indices[i * 6 + 5] = i * 4 + 3;
     }
 
     Device = rtcNewDevice(""); CHECK_EMBREE
@@ -372,31 +377,36 @@ public:
     RTCBuffer pointsBuffer = rtcNewSharedBuffer(Device, reinterpret_cast<void*>(points.data()), points.size() * sizeof(points[0])); CHECK_EMBREE
 
     rtcSetGeometryBuffer(geometry, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, indicesBuffer, 0, 0, indices.size() / 3); CHECK_EMBREE
-    rtcSetGeometryBuffer(geometry, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, pointsBuffer, 0, sizeof(float), points.size()); CHECK_EMBREE
+    rtcSetGeometryBuffer(geometry, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, pointsBuffer, 0, 0, points.size()); CHECK_EMBREE
     rtcCommitGeometry(geometry); CHECK_EMBREE
     rtcAttachGeometry(Scene, geometry); CHECK_EMBREE
-    rtcReleaseGeometry(geometry);
+    rtcReleaseGeometry(geometry); CHECK_EMBREE
     rtcCommitScene(Scene); CHECK_EMBREE
     rtcInitIntersectContext(&IntersectionContext); CHECK_EMBREE
     IntersectionContext.flags = RTC_INTERSECT_CONTEXT_FLAG_COHERENT;
     IntersectionContext.instID[0] = 0;
   }
 
-  std::vector<bool> traceRays(const std::vector<Sample>& samples1, std::vector<Sample>& samples2) {
-    std::vector<bool> result;
+  std::vector<uint8_t> traceRays(const std::vector<Sample>& samples1, const std::vector<Sample>& samples2) {
+    std::vector<uint8_t> result;
+    result.resize(samples1.size() * samples2.size());
+    int last = 0;
     const int PACKET_SIZE = 16;
     for (int i = 0; i < samples1.size(); ++i) {
+      const Sample& s1 = samples1[i];
       for (int j = 0; j < samples2.size(); j += PACKET_SIZE) {
         RTCRay16 raysPacket;
         for (int k = 0; k < PACKET_SIZE; ++k) {
-          raysPacket.org_x[k] = samples1[i].pos.x;
-          raysPacket.org_y[k] = samples1[i].pos.y;
-          raysPacket.org_z[k] = samples1[i].pos.z;
+          const Sample& s2 = samples2[j + k];
+          float3 dir = s2.pos - s1.pos;
+          raysPacket.org_x[k] = s1.pos.x;
+          raysPacket.org_y[k] = s1.pos.y;
+          raysPacket.org_z[k] = s1.pos.z;
           raysPacket.tnear[k] = 1e-5f;
-          raysPacket.dir_x[k] = samples2[j + k].pos.x - samples1[i].pos.x;
-          raysPacket.dir_y[k] = samples2[j + k].pos.y - samples1[i].pos.y;
-          raysPacket.dir_z[k] = samples2[j + k].pos.z - samples1[i].pos.z;
-          raysPacket.tfar[k] = length(samples2[j + k].pos - samples1[i].pos) - 1e-5f;
+          raysPacket.dir_x[k] = dir.x;
+          raysPacket.dir_y[k] = dir.y;
+          raysPacket.dir_z[k] = dir.z;
+          raysPacket.tfar[k] = length(dir) - 1e-5f;
           raysPacket.id[k] = 0;
           raysPacket.mask[k] = 0;
           raysPacket.time[k] = 0;
@@ -405,11 +415,12 @@ public:
         rtcOccluded16(&validMask, Scene, &IntersectionContext, &raysPacket); CHECK_EMBREE
 
         for (int k = 0; k < PACKET_SIZE; ++k) {
-          result.push_back(!std::isinf(raysPacket.tfar[k]));
+          result[last++] = std::isinf(raysPacket.tfar[k]);
         }
       }
     }
 
+    result.resize(last);
     return result;
   }
 
@@ -419,13 +430,59 @@ public:
   }
 };
 
-void RD_FFIntegrator::EndScene() {
-  const int quadsCount = instanceQuads.size();;
+void RD_FFIntegrator::ComputeFF(const int& quadsCount, std::vector<RD_FFIntegrator::Quad>& bigQuads)
+{
   std::vector<std::vector<Sample>> samples = gen_samples(instanceQuads);
   std::vector<float> squares(quadsCount);
   for (int i = 0; i < quadsCount; ++i) {
     squares[i] = quad_square(instanceQuads[i]);
   }
+
+  EmbreeTracer tracer(bigQuads);
+
+  omp_set_dynamic(0);
+
+  FF.assign(quadsCount, std::vector<float>(quadsCount, 0));
+#pragma omp parallel for num_threads(7)
+  for (int i = 0; i < quadsCount; ++i) {
+    const std::vector<Sample>& samples1 = samples[i];
+    for (int j = i + 1; j < quadsCount; ++j) {
+      const std::vector<Sample>& samples2 = samples[j];
+      std::vector<uint8_t> occluded = tracer.traceRays(samples1, samples2);
+      float value = 0;
+      int samplesCount = 0;
+      for (int k = 0; k < samples1.size(); ++k) {
+        const Sample& sample1 = samples1[k];
+        for (int h = 0; h < samples2.size(); ++h) {
+          const Sample& sample2 = samples2[h];
+          if (occluded[k * samples2.size() + h]) {
+            samplesCount++;
+            continue;
+          }
+          const float3 r = sample1.pos - sample2.pos;
+          const float l = length(r);
+          if (l < 1e-5) {
+            continue;
+          }
+          const float3 toSample1 = r / l;
+          const float3 toSample2 = -toSample1;
+          const float theta1 = max(dot(sample1.normal, toSample2), 0.f);
+          const float theta2 = max(dot(sample2.normal, toSample1), 0.f);
+          value += theta1 * theta2 / l / l;
+          samplesCount++;
+        }
+      }
+      if (samplesCount > 0) {
+        value /= samplesCount * 3.14f;
+      }
+      FF[i][j] = value * squares[j];
+      FF[j][i] = value * squares[i];
+    }
+  }
+}
+
+void RD_FFIntegrator::EndScene() {
+  const int quadsCount = instanceQuads.size();
 
   std::vector<float3> colors, emission;
   for (int i = 0; i < quadsCount; ++i) {
@@ -434,46 +491,13 @@ void RD_FFIntegrator::EndScene() {
   }
 
   std::vector<RD_FFIntegrator::Quad> bigQuads = merge_quads(instanceQuads);
-  EmbreeTracer tracer(bigQuads);
 
-  omp_set_dynamic(0);
-
-  FF.assign(quadsCount, std::vector<float>(quadsCount, 0));
-#pragma omp parallel for num_threads(7)
-  for (int i = 0; i < quadsCount; ++i) {
-    for (int j = i + 1; j < quadsCount; ++j) {
-      std::vector<bool> occluded = tracer.traceRays(samples[i], samples[j]);
-      float value = 0;
-      int samplesCount = 0;
-      for (int k = 0; k < samples[i].size(); ++k) {
-        for (int h = 0; h < samples[j].size(); ++h) {
-          if (!occluded[k * samples[j].size() + h]) {
-            samplesCount++;
-            continue;
-          }
-          const float3 r = samples[i][k].pos - samples[j][h].pos;
-          const float l = length(r);
-          if (l < 1e-1) {
-            continue;
-          }
-          const float3 toSample1 = r / l;
-          const float3 toSample2 = -toSample1;
-          const float theta1 = max(dot(samples[i][k].normal, toSample2), 0.f);
-          const float theta2 = max(dot(samples[j][h].normal, toSample1), 0.f);
-          value += theta1 * theta2 / l / l;
-          samplesCount++;
-        }
-      }
-      value /= samplesCount * 3.14f;
-      FF[i][j] = value * squares[i];
-      FF[j][i] = value * squares[j];
-    }
-  }
+  ComputeFF(quadsCount, bigQuads);
 
   std::vector<float3> incident;
   std::vector<float3> lighting(emission);
   std::vector<float3> excident(emission);
-  for (int iter = 0; iter < 4; ++iter) {
+  for (int iter = 0; iter < 7; ++iter) {
     incident.assign(quadsCount, float3());
     for (int i = 0; i < quadsCount; ++i) {
       for (int j = 0; j < quadsCount; ++j) {
@@ -485,14 +509,58 @@ void RD_FFIntegrator::EndScene() {
       lighting[i] += excident[i];
     }
   }
+  auto quads = instanceQuads;
+
+  hrSceneLibraryOpen(L"GI_res/scene.xml", HR_WRITE_DISCARD);
+  HRSceneInstRef scene = hrSceneCreate(L"Scene");
+  hrSceneOpen(scene, HR_WRITE_DISCARD);
+
+  auto cam = hrCameraCreate(L"Camera1");
+  hrCameraOpen(cam, HR_WRITE_DISCARD);
+  auto proxyCamNode = hrCameraParamNode(cam);
+  for (auto it = camParams.begin(); it != camParams.end(); ++it) {
+    proxyCamNode.append_child(it->first.c_str()).text().set(it->second.c_str());
+  }
+  hrCameraClose(cam);
+
+  for (int i = 0; i < lighting.size(); ++i) {
+    std::wstringstream ss;
+    ss << "Mat" << i;
+    auto matRef = hrMaterialCreate(ss.str().c_str());
+    hrMaterialOpen(matRef, HR_WRITE_DISCARD);
+    auto material = hrMaterialParamNode(matRef);
+    auto diffuse = material.append_child();
+    diffuse.set_name(L"diffuse");
+    diffuse.append_attribute(L"brdf_type").set_value(L"lambert");
+    auto color = diffuse.append_child();
+    color.set_name(L"color");
+    ss = std::wstringstream();
+    ss << lighting[i].x << " " << lighting[i].y << ' ' << lighting[i].z;
+    color.append_attribute(L"val").set_value(ss.str().c_str());
+    hrMaterialClose(matRef);
+
+    ss = std::wstringstream();
+    ss << "Mesh" << i;
+    auto mesh = hrMeshCreate(ss.str().c_str());
+    hrMeshOpen(mesh, HR_TRIANGLE_IND12, HR_WRITE_DISCARD);
+    std::array<int, 6> quadIdx = { 0, 1, 2, 0, 2, 3 };
+    hrMeshMaterialId(mesh, i);
+    hrMeshVertexAttribPointer4f(mesh, L"positions", reinterpret_cast<float*>(quads[i].points.data()));
+    hrMeshVertexAttribPointer4f(mesh, L"normals", reinterpret_cast<float*>(quads[i].normal.value().data()));
+    hrMeshVertexAttribPointer4f(mesh, L"tangent", reinterpret_cast<float*>(quads[i].tangent.value().data()));
+    hrMeshVertexAttribPointer2f(mesh, L"texcoord", reinterpret_cast<float*>(quads[i].texCoords.data()));
+    hrMeshAppendTriangles3(mesh, 6, quadIdx.data());
+    hrMeshClose(mesh);
+
+    std::array<float, 16> matrix = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    hrMeshInstance(scene, mesh, matrix.data());
+  }
+  hrSceneClose(scene);
+  hrFlush(scene);// , render, cam);
 }
 
 using DrawFuncType = void (*)();
 using InitFuncType = void (*)();
-
-static HRRenderRef  renderRef;
-
-static HRSceneInstRef scnRef;
 
 void window_main_ff_integrator(const wchar_t* a_libPath, const wchar_t* a_renderName, InitFuncType a_pInitFunc, DrawFuncType a_pDrawFunc) {
   hrErrorCallerPlace(L"Init");
@@ -501,8 +569,33 @@ void window_main_ff_integrator(const wchar_t* a_libPath, const wchar_t* a_render
 
   HRSceneLibraryInfo scnInfo = hrSceneLibraryInfo();
 
+  if (scnInfo.camerasNum == 0) // create some default camera
+    camRef = hrCameraCreate(L"defaultCam");
+
   renderRef.id = 0;
+  camRef.id = 0;
   scnRef.id = 0;
+
+  hrCameraOpen(camRef, HR_OPEN_READ_ONLY);
+  auto camNode = hrCameraParamNode(camRef);
+  const std::array<std::wstring, 12> camParamNames = {
+    L"position",
+    L"fov",
+    L"nearClipPlane",
+    L"farClipPlane",
+    L"enable_dof",
+    L"dof_lens_radius",
+    L"up",
+    L"look_at",
+    L"tiltRotX",
+    L"tiltRotY",
+    L"tiltShiftX",
+    L"tiltShiftY",
+  };
+  for (int i = 0; i < camParamNames.size(); ++i) {
+    camParams[camParamNames[i]] = camNode.child(camParamNames[i].c_str()).text().as_string();
+  }
+  hrCameraClose(camRef);
 
   renderRef = hrRenderCreate(a_renderName);
 

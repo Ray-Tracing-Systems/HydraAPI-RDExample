@@ -7,8 +7,9 @@
 
 
 struct RD_FFIntegrator : public IHRRenderDriver {
-  template<int N>
+  template<size_t N>
   struct Polygon {
+    static const size_t POINTS_COUNT = N;
     std::array<HydraLiteMath::float4, N> points;
     std::array<HydraLiteMath::float2, N> texCoords;
     std::optional<std::array<HydraLiteMath::float4, N>> normal;
@@ -30,6 +31,7 @@ struct RD_FFIntegrator : public IHRRenderDriver {
   bool UpdateCamera(pugi::xml_node a_camNode) override { return false; }
   bool UpdateSettings(pugi::xml_node a_settingsNode) override { return false; }
   void BeginScene(pugi::xml_node a_sceneNode) override;
+  void ComputeFF(const int& quadsCount, std::vector<RD_FFIntegrator::Quad>& bigQuads);
   void EndScene() override;
   void InstanceMeshes(int32_t a_mesh_id, const float* a_matrix, int32_t a_instNum, const int* a_lightInstId, const int* a_remapId, const int* a_realInstId) override;
   void InstanceLights(int32_t a_light_id, const float* a_matrix, pugi::xml_node* a_custAttrArray, int32_t a_instNum, int32_t a_lightGroupId) override {}
