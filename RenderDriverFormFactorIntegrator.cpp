@@ -291,7 +291,7 @@ static std::vector<std::vector<Sample>> gen_samples(const std::vector<RD_FFInteg
       const auto& normArray = quads[i].normal.value();
       float4 normal = lerpSquare(normArray[0], normArray[1], normArray[2], normArray[3], randomValues[j].x, randomValues[j].y);
       sm[j].pos = float3(pos.x, pos.y, pos.z);
-      sm[j].normal = float3(normal.x, normal.y, normal.z);
+      sm[j].normal = normalize(float3(normal.x, normal.y, normal.z));
     }
     samples.push_back(sm);
   }
@@ -376,15 +376,20 @@ public:
     RTCBuffer indicesBuffer = rtcNewSharedBuffer(Device, reinterpret_cast<void*>(indices.data()), indices.size() * sizeof(indices[0])); CHECK_EMBREE
     RTCBuffer pointsBuffer = rtcNewSharedBuffer(Device, reinterpret_cast<void*>(points.data()), points.size() * sizeof(points[0])); CHECK_EMBREE
 
-    rtcSetGeometryBuffer(geometry, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, indicesBuffer, 0, 0, indices.size() / 3); CHECK_EMBREE
-    rtcSetGeometryBuffer(geometry, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, pointsBuffer, 0, 0, points.size()); CHECK_EMBREE
+    rtcSetGeometryBuffer(geometry, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, indicesBuffer, 0, sizeof(uint32_t) * 3, indices.size() / 3); CHECK_EMBREE
+    rtcSetGeometryBuffer(geometry, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, pointsBuffer, 0, sizeof(points[0]), points.size()); CHECK_EMBREE
     rtcCommitGeometry(geometry); CHECK_EMBREE
     rtcAttachGeometry(Scene, geometry); CHECK_EMBREE
     rtcReleaseGeometry(geometry); CHECK_EMBREE
     rtcCommitScene(Scene); CHECK_EMBREE
+    rtcSetSceneFlags(Scene, RTC_SCENE_FLAG_ROBUST); CHECK_EMBREE
     rtcInitIntersectContext(&IntersectionContext); CHECK_EMBREE
     IntersectionContext.flags = RTC_INTERSECT_CONTEXT_FLAG_COHERENT;
     IntersectionContext.instID[0] = 0;
+
+    RTCBounds bounds;
+    rtcGetSceneBounds(Scene, &bounds);
+    std::cout << bounds.align0 << std::endl;
   }
 
   std::vector<uint8_t> traceRays(const std::vector<Sample>& samples1, const std::vector<Sample>& samples2) {
@@ -396,17 +401,19 @@ public:
       const Sample& s1 = samples1[i];
       for (int j = 0; j < samples2.size(); j += PACKET_SIZE) {
         RTCRay16 raysPacket;
+        RTCRayHit16 raysPacketDebug;
         for (int k = 0; k < PACKET_SIZE; ++k) {
           const Sample& s2 = samples2[j + k];
+          const float BIAS = 1e-5f;
           float3 dir = s2.pos - s1.pos;
           raysPacket.org_x[k] = s1.pos.x;
           raysPacket.org_y[k] = s1.pos.y;
           raysPacket.org_z[k] = s1.pos.z;
-          raysPacket.tnear[k] = 1e-5f;
+          raysPacket.tnear[k] = BIAS;
           raysPacket.dir_x[k] = dir.x;
           raysPacket.dir_y[k] = dir.y;
           raysPacket.dir_z[k] = dir.z;
-          raysPacket.tfar[k] = length(dir) - 1e-5f;
+          raysPacket.tfar[k] = 1.f - BIAS;
           raysPacket.id[k] = 0;
           raysPacket.mask[k] = 0;
           raysPacket.time[k] = 0;
@@ -481,19 +488,8 @@ void RD_FFIntegrator::ComputeFF(const int& quadsCount, std::vector<RD_FFIntegrat
   }
 }
 
-void RD_FFIntegrator::EndScene() {
-  const int quadsCount = instanceQuads.size();
-
-  std::vector<float3> colors, emission;
-  for (int i = 0; i < quadsCount; ++i) {
-    colors.push_back(matColors[instanceQuads[i].materialId]);
-    emission.push_back(matEmission[instanceQuads[i].materialId]);
-  }
-
-  std::vector<RD_FFIntegrator::Quad> bigQuads = merge_quads(instanceQuads);
-
-  ComputeFF(quadsCount, bigQuads);
-
+std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<float3>& emission, const std::vector<float3>& colors) {
+  const int quadsCount = colors.size();
   std::vector<float3> incident;
   std::vector<float3> lighting(emission);
   std::vector<float3> excident(emission);
@@ -509,6 +505,53 @@ void RD_FFIntegrator::EndScene() {
       lighting[i] += excident[i];
     }
   }
+  return lighting;
+}
+
+//std::vector<float3> RD_FFIntegrator::ComputeLightingRandom(const std::vector<float3>& emission, const std::vector<float3>& colors) {
+//  const int quadsCount = colors.size();
+//  std::vector<std::vector<float>> probabilityTable(quadsCount);
+//  std::vector<std::vector<std::pair<int, int>>> probabilityChoise(quadsCount);
+//  for (int i = 0; i < FF.size(); ++i) {
+//    std::vector<std::pair<float, int>> row;
+//    float sum = 0;
+//    for (int j = 0; j < FF[i].size(); ++j) {
+//      if (FF[i][j] < 1e-9) {
+//        continue;
+//      }
+//      row.emplace_back(j, FF[i][j]);
+//      sum += FF[i][j];
+//    }
+//    if (sum < 1) {
+//      row.emplace_back(-1, 1.f - sum);
+//    }
+//    sum = 1.f;
+//    const float columnSum = sum / row.size();
+//    while (!row.empty()) {
+//      auto [minVal, maxVal] = std::minmax_element(row.begin(), row.end());
+//      probabilityChoise[i].emplace_back(minVal->second, maxVal->second);
+//      probabilityTable[i].push_back(minVal->first / columnSum);
+//      maxVal->first -= columnSum - minVal->first;
+//      row.erase(minVal);
+//    }
+//  }
+//}
+
+void RD_FFIntegrator::EndScene() {
+  const int quadsCount = instanceQuads.size();
+
+  std::vector<float3> colors, emission;
+  for (int i = 0; i < quadsCount; ++i) {
+    colors.push_back(matColors[instanceQuads[i].materialId]);
+    emission.push_back(matEmission[instanceQuads[i].materialId]);
+  }
+
+  std::vector<RD_FFIntegrator::Quad> bigQuads = merge_quads(instanceQuads);
+
+  ComputeFF(quadsCount, bigQuads);
+
+  auto lighting = ComputeLightingClassic(emission, colors);
+
   auto quads = instanceQuads;
 
   hrSceneLibraryOpen(L"GI_res/scene.xml", HR_WRITE_DISCARD);
