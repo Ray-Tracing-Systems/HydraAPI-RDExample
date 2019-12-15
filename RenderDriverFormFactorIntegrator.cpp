@@ -17,6 +17,7 @@ static HRRenderRef  renderRef;
 static HRCameraRef  camRef;
 static HRSceneInstRef scnRef;
 static std::unordered_map<std::wstring, std::wstring> camParams;
+static bool recompute_ff = false;
 
 IHRRenderDriver* CreateFFIntegrator_RenderDriver()
 {
@@ -302,7 +303,9 @@ static float quad_square(const RD_FFIntegrator::Quad& quad) {
   return length3(quad.points[0] - quad.points[1]) * length3(quad.points[0] - quad.points[3]);
 }
 
-static std::vector<RD_FFIntegrator::Quad> merge_quads(const std::vector<RD_FFIntegrator::Quad>& quads) {
+
+
+static std::vector<RD_FFIntegrator::Quad> merge_quads(const std::vector<RD_FFIntegrator::Quad>& quads, int &tessFactor) {
   std::vector<RD_FFIntegrator::Quad> result;
   std::vector<uint32_t> quadEnds(1, 0);
   for (int i = 1; i < quads.size(); ++i) {
@@ -323,7 +326,7 @@ static std::vector<RD_FFIntegrator::Quad> merge_quads(const std::vector<RD_FFInt
   }
   quadEnds.push_back(quads.size());
   for (int i = 1; i < quadEnds.size(); ++i) {
-    const int tessFactor = std::sqrt(quadEnds[i] - quadEnds[i - 1]) + 0.5f;
+    tessFactor = std::sqrt(quadEnds[i] - quadEnds[i - 1]) + 0.5f;
     const std::array<int, 4> cornerQuadIndices = { quadEnds[i - 1], quadEnds[i] - tessFactor, quadEnds[i] - 1, quadEnds[i - 1] + tessFactor - 1 };
     for (int j = 0; j < 4; ++j) {
       result[i - 1].points[j] = quads[cornerQuadIndices[j]].points[j];
@@ -439,6 +442,21 @@ public:
 
 void RD_FFIntegrator::ComputeFF(const int& quadsCount, std::vector<RD_FFIntegrator::Quad>& bigQuads)
 {
+  FF.assign(quadsCount, std::vector<float>(quadsCount, 0));
+
+  std::stringstream ss;
+  ss << "FF" << quadsCount;
+  std::ifstream fin(ss.str(), std::ios::binary);
+  if (!recompute_ff && fin.is_open()) {
+    for (int i = 0; i < quadsCount; ++i) {
+      for (int j = 0; j < quadsCount; ++j) {
+        fin.read(reinterpret_cast<char*>(&FF[i][j]), sizeof(FF[i][j]));
+      }
+    }
+    return;
+  }
+  std::ofstream fout(ss.str(), std::ios::binary);
+
   std::vector<std::vector<Sample>> samples = gen_samples(instanceQuads);
   std::vector<float> squares(quadsCount);
   for (int i = 0; i < quadsCount; ++i) {
@@ -449,10 +467,9 @@ void RD_FFIntegrator::ComputeFF(const int& quadsCount, std::vector<RD_FFIntegrat
 
   omp_set_dynamic(0);
 
-  FF.assign(quadsCount, std::vector<float>(quadsCount, 0));
-#pragma omp parallel for num_threads(7)
   for (int i = 0; i < quadsCount; ++i) {
     const std::vector<Sample>& samples1 = samples[i];
+#pragma omp parallel for num_threads(7)
     for (int j = i + 1; j < quadsCount; ++j) {
       const std::vector<Sample>& samples2 = samples[j];
       std::vector<uint8_t> occluded = tracer.traceRays(samples1, samples2);
@@ -484,6 +501,12 @@ void RD_FFIntegrator::ComputeFF(const int& quadsCount, std::vector<RD_FFIntegrat
       }
       FF[i][j] = value * squares[j];
       FF[j][i] = value * squares[i];
+    }
+  }
+
+  for (int i = 0; i < quadsCount; ++i) {
+    for (int j = 0; j < quadsCount; ++j) {
+      fout.write(reinterpret_cast<char*>(&FF[i][j]), sizeof(FF[i][j]));
     }
   }
 }
@@ -537,6 +560,9 @@ std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<fl
 //  }
 //}
 
+static int tessFactor;
+static bool noInterpolation;
+
 void RD_FFIntegrator::EndScene() {
   const int quadsCount = instanceQuads.size();
 
@@ -546,7 +572,7 @@ void RD_FFIntegrator::EndScene() {
     emission.push_back(matEmission[instanceQuads[i].materialId]);
   }
 
-  std::vector<RD_FFIntegrator::Quad> bigQuads = merge_quads(instanceQuads);
+  std::vector<RD_FFIntegrator::Quad> bigQuads = merge_quads(instanceQuads, tessFactor);
 
   ComputeFF(quadsCount, bigQuads);
 
@@ -566,37 +592,108 @@ void RD_FFIntegrator::EndScene() {
   }
   hrCameraClose(cam);
 
-  for (int i = 0; i < lighting.size(); ++i) {
-    std::wstringstream ss;
-    ss << "Mat" << i;
-    auto matRef = hrMaterialCreate(ss.str().c_str());
-    hrMaterialOpen(matRef, HR_WRITE_DISCARD);
-    auto material = hrMaterialParamNode(matRef);
-    auto diffuse = material.append_child();
-    diffuse.set_name(L"diffuse");
-    diffuse.append_attribute(L"brdf_type").set_value(L"lambert");
-    auto color = diffuse.append_child();
-    color.set_name(L"color");
-    ss = std::wstringstream();
-    ss << lighting[i].x << " " << lighting[i].y << ' ' << lighting[i].z;
-    color.append_attribute(L"val").set_value(ss.str().c_str());
-    hrMaterialClose(matRef);
+  if (!noInterpolation) {
+    for (int i = 0; i < bigQuads.size(); ++i) {
+      const int imageSize = tessFactor * tessFactor;
+      const int rowStride = tessFactor;
+      std::vector<uint8_t> imgData((tessFactor + 2) * (tessFactor + 2) * 4, 0);
+      for (int j = 0; j < tessFactor; ++j) {
+        for (int k = 0; k < tessFactor; ++k) {
+          const int pixelIdx = ((j + 1) * (tessFactor + 2) + k + 1) * 4;
+          imgData[pixelIdx] = lighting[i * imageSize + j * rowStride + k].x * 255;
+          imgData[pixelIdx + 1] = lighting[i * imageSize + j * rowStride + k].y * 255;
+          imgData[pixelIdx + 2] = lighting[i * imageSize + j * rowStride + k].z * 255;
+        }
+      }
+      for (int j = 0; j < tessFactor; ++j) {
+        imgData[(j + 1) * 4] = imgData[(j + tessFactor + 2 + 1) * 4];
+        imgData[(j + 1) * 4 + 1] = imgData[(j + tessFactor + 2 + 1) * 4 + 1];
+        imgData[(j + 1) * 4 + 2] = imgData[(j + tessFactor + 2 + 1) * 4 + 2];
 
-    ss = std::wstringstream();
-    ss << "Mesh" << i;
-    auto mesh = hrMeshCreate(ss.str().c_str());
-    hrMeshOpen(mesh, HR_TRIANGLE_IND12, HR_WRITE_DISCARD);
-    std::array<int, 6> quadIdx = { 0, 1, 2, 0, 2, 3 };
-    hrMeshMaterialId(mesh, i);
-    hrMeshVertexAttribPointer4f(mesh, L"positions", reinterpret_cast<float*>(quads[i].points.data()));
-    hrMeshVertexAttribPointer4f(mesh, L"normals", reinterpret_cast<float*>(quads[i].normal.value().data()));
-    hrMeshVertexAttribPointer4f(mesh, L"tangent", reinterpret_cast<float*>(quads[i].tangent.value().data()));
-    hrMeshVertexAttribPointer2f(mesh, L"texcoord", reinterpret_cast<float*>(quads[i].texCoords.data()));
-    hrMeshAppendTriangles3(mesh, 6, quadIdx.data());
-    hrMeshClose(mesh);
+        imgData[(j + 1 + (tessFactor + 2) * (tessFactor + 1)) * 4] = imgData[(j + 1 + (tessFactor + 2) * (tessFactor)) * 4];
+        imgData[(j + 1 + (tessFactor + 2) * (tessFactor + 1)) * 4 + 1] = imgData[(j + 1 + (tessFactor + 2) * (tessFactor)) * 4 + 1];
+        imgData[(j + 1 + (tessFactor + 2) * (tessFactor + 1)) * 4 + 2] = imgData[(j + 1 + (tessFactor + 2) * (tessFactor)) * 4 + 2];
+      }
+      for (int j = 0; j < tessFactor + 2; ++j) {
+        imgData[(j * (tessFactor + 2)) * 4] = imgData[(j * (tessFactor + 2) + 1) * 4];
+        imgData[(j * (tessFactor + 2)) * 4 + 1] = imgData[(j * (tessFactor + 2) + 1) * 4 + 1];
+        imgData[(j * (tessFactor + 2)) * 4 + 2] = imgData[(j * (tessFactor + 2) + 1) * 4 + 2];
 
-    std::array<float, 16> matrix = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-    hrMeshInstance(scene, mesh, matrix.data());
+        imgData[(j * (tessFactor + 2) + tessFactor + 1) * 4] = imgData[(j * (tessFactor + 2) + tessFactor) * 4];
+        imgData[(j * (tessFactor + 2) + tessFactor + 1) * 4 + 1] = imgData[(j * (tessFactor + 2) + tessFactor) * 4 + 1];
+        imgData[(j * (tessFactor + 2) + tessFactor + 1) * 4 + 2] = imgData[(j * (tessFactor + 2) + tessFactor) * 4 + 2];
+      }
+      auto texId = hrTexture2DCreateFromMemory(tessFactor + 2, tessFactor + 2, 4, imgData.data());
+
+      std::wstringstream ss;
+      ss << "Mat" << i;
+      auto matRef = hrMaterialCreate(ss.str().c_str());
+      hrMaterialOpen(matRef, HR_WRITE_DISCARD);
+      auto material = hrMaterialParamNode(matRef);
+      auto diffuse = material.append_child();
+      diffuse.set_name(L"diffuse");
+      diffuse.append_attribute(L"brdf_type").set_value(L"lambert");
+      auto color = diffuse.append_child();
+      color.set_name(L"color");
+      color.append_attribute(L"val").set_value(L"1 1 1");
+      auto texRef = color.append_child();
+      texRef.set_name(L"texture");
+      texRef.append_attribute(L"type").set_value(L"texref");
+      texRef.append_attribute(L"id").set_value(texId.id);
+      hrMaterialClose(matRef);
+
+      ss = std::wstringstream();
+      ss << "Mesh" << i;
+      auto mesh = hrMeshCreate(ss.str().c_str());
+      hrMeshOpen(mesh, HR_TRIANGLE_IND12, HR_WRITE_DISCARD);
+      std::array<int, 6> quadIdx = { 0, 1, 2, 0, 2, 3 };
+      float offset = 0.5f / (tessFactor + 2);
+      std::array<float2, 4> texCoords = { float2(offset, offset), float2(offset, 1 - offset), float2(1 - offset, 1 - offset), float2(1 - offset, offset) };
+      hrMeshMaterialId(mesh, i);
+      hrMeshVertexAttribPointer4f(mesh, L"positions", reinterpret_cast<float*>(bigQuads[i].points.data()));
+      hrMeshVertexAttribPointer4f(mesh, L"normals", reinterpret_cast<float*>(bigQuads[i].normal.value().data()));
+      hrMeshVertexAttribPointer4f(mesh, L"tangent", reinterpret_cast<float*>(bigQuads[i].tangent.value().data()));
+      hrMeshVertexAttribPointer2f(mesh, L"texcoord", reinterpret_cast<float*>(texCoords.data()));
+      hrMeshAppendTriangles3(mesh, 6, quadIdx.data());
+      hrMeshClose(mesh);
+
+      std::array<float, 16> matrix = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+      hrMeshInstance(scene, mesh, matrix.data());
+    }
+  }
+  else {
+    for (int i = 0; i < lighting.size(); ++i) {
+      std::wstringstream ss;
+      ss << "Mat" << i;
+      auto matRef = hrMaterialCreate(ss.str().c_str());
+      hrMaterialOpen(matRef, HR_WRITE_DISCARD);
+      auto material = hrMaterialParamNode(matRef);
+      auto diffuse = material.append_child();
+      diffuse.set_name(L"diffuse");
+      diffuse.append_attribute(L"brdf_type").set_value(L"lambert");
+      auto color = diffuse.append_child();
+      color.set_name(L"color");
+      ss = std::wstringstream();
+      ss << lighting[i].x << " " << lighting[i].y << ' ' << lighting[i].z;
+      color.append_attribute(L"val").set_value(ss.str().c_str());
+      hrMaterialClose(matRef);
+
+      ss = std::wstringstream();
+      ss << "Mesh" << i;
+      auto mesh = hrMeshCreate(ss.str().c_str());
+      hrMeshOpen(mesh, HR_TRIANGLE_IND12, HR_WRITE_DISCARD);
+      std::array<int, 6> quadIdx = { 0, 1, 2, 0, 2, 3 };
+      hrMeshMaterialId(mesh, i);
+      hrMeshVertexAttribPointer4f(mesh, L"positions", reinterpret_cast<float*>(quads[i].points.data()));
+      hrMeshVertexAttribPointer4f(mesh, L"normals", reinterpret_cast<float*>(quads[i].normal.value().data()));
+      hrMeshVertexAttribPointer4f(mesh, L"tangent", reinterpret_cast<float*>(quads[i].tangent.value().data()));
+      hrMeshVertexAttribPointer2f(mesh, L"texcoord", reinterpret_cast<float*>(quads[i].texCoords.data()));
+      hrMeshAppendTriangles3(mesh, 6, quadIdx.data());
+      hrMeshClose(mesh);
+
+      std::array<float, 16> matrix = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+      hrMeshInstance(scene, mesh, matrix.data());
+    }
   }
   hrSceneClose(scene);
   hrFlush(scene);// , render, cam);
@@ -605,7 +702,9 @@ void RD_FFIntegrator::EndScene() {
 using DrawFuncType = void (*)();
 using InitFuncType = void (*)();
 
-void window_main_ff_integrator(const wchar_t* a_libPath, const wchar_t* a_renderName, InitFuncType a_pInitFunc, DrawFuncType a_pDrawFunc) {
+void window_main_ff_integrator(const wchar_t* a_libPath, const wchar_t* a_renderName, bool recomputeFF, bool no_interpolation) {
+  recompute_ff = recomputeFF;
+  noInterpolation = no_interpolation;
   hrErrorCallerPlace(L"Init");
 
   hrSceneLibraryOpen(a_libPath, HR_OPEN_EXISTING);

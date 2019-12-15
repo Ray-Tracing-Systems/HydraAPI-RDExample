@@ -42,8 +42,7 @@ void window_main_free_look(const wchar_t* a_libPath, const wchar_t* a_renderName
 void window_main_free_look_vulkan(const wchar_t* a_libPath, const wchar_t* a_renderName,
                            InitFuncType a_pInitFunc = nullptr, DrawFuncType a_pDrawFunc = nullptr);
 
-void window_main_ff_integrator(const wchar_t* a_libPath, const wchar_t* a_renderName,
-  InitFuncType a_pInitFunc = nullptr, DrawFuncType a_pDrawFunc = nullptr);
+void window_main_ff_integrator(const wchar_t* a_libPath, const wchar_t* a_renderName, bool recomputeFF, bool noInterpolation);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////// GLFW
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////// GLFW
@@ -144,10 +143,17 @@ int main(int argc, const char** argv)
 #endif
   
   std::cout << "sizeof(size_t) = " << sizeof(size_t) <<std::endl;
+
+  bool recomputeFF = false;
+  bool noInterpolation = false;
+  for (int i = 1; i < argc; ++i) {
+    recomputeFF |= strcmp(argv[i], "-recomputeFF") == 0;
+    noInterpolation |= strcmp(argv[i], "-noInterpolation") == 0;
+  }
   
   try
   {
-    window_main_ff_integrator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"ff_integrator");
+    window_main_ff_integrator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
     //window_main_free_look_vulkan(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"vulkan");
     //window_main_free_look_vulkan(L"data/testscenes/test_35", L"vulkan");
     window_main_free_look_vulkan(L"GI_res", L"vulkan");
