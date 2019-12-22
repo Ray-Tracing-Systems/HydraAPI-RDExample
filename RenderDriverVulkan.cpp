@@ -1533,31 +1533,12 @@ bool RD_Vulkan::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, 
     textures.resize(a_texId + 1);
   }
 
-	std::vector<uint8_t> convertedData;
-	
-	if (bpp > 4) // well, perhaps this is not error, we just don't support hdr textures in this render
-	{
-		convertedData.resize(w * h * bpp / sizeof(float));
-
-		#pragma omp parallel for
-		for (int y = 0; y < h; y++)
-		{
-			for (int x = 0; x < w; x++)
-			{
-				float r = ((float*)a_data)[(y*w + x) * 4 + 0];
-				float g = ((float*)a_data)[(y*w + x) * 4 + 1];
-				float b = ((float*)a_data)[(y*w + x) * 4 + 2];
-				float a = ((float*)a_data)[(y*w + x) * 4 + 3];
-
-				convertedData[(y*w + x) * 4 + 0] = uint8_t(clamp(r, 0.0, 1.0) * 255.0f);
-				convertedData[(y*w + x) * 4 + 1] = uint8_t(clamp(g, 0.0, 1.0) * 255.0f);
-				convertedData[(y*w + x) * 4 + 2] = uint8_t(clamp(b, 0.0, 1.0) * 255.0f);
-				convertedData[(y*w + x) * 4 + 3] = uint8_t(clamp(a, 0.0, 1.0) * 255.0f);
-			}
-		}
+  if (bpp == 16) {
     textures[a_texId] = std::make_unique<Texture>(device, w, h, reinterpret_cast<const float*>(a_data));
-  } else {
+  } else if (bpp == 4) {
     textures[a_texId] = std::make_unique<Texture>(device, w, h, reinterpret_cast<const uint8_t*>(a_data));
+  } else {
+    throw "Unsupported texture format";
   }
 
   return true;
