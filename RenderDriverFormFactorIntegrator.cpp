@@ -600,9 +600,9 @@ void RD_FFIntegrator::EndScene() {
       for (int j = 0; j < tessFactor; ++j) {
         for (int k = 0; k < tessFactor; ++k) {
           const int pixelIdx = ((j + 1) * (tessFactor + 2) + k + 1) * 4;
-          imgData[pixelIdx] = lighting[i * imageSize + j * rowStride + k].x * 255;
-          imgData[pixelIdx + 1] = lighting[i * imageSize + j * rowStride + k].y * 255;
-          imgData[pixelIdx + 2] = lighting[i * imageSize + j * rowStride + k].z * 255;
+          imgData[pixelIdx] = min(lighting[i * imageSize + j * rowStride + k].x * 255, 255);
+          imgData[pixelIdx + 1] = min(lighting[i * imageSize + j * rowStride + k].y * 255, 255);
+          imgData[pixelIdx + 2] = min(lighting[i * imageSize + j * rowStride + k].z * 255, 255);
         }
       }
       for (int j = 0; j < tessFactor; ++j) {

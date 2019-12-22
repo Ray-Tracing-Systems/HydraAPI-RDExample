@@ -153,7 +153,9 @@ int main(int argc, const char** argv)
   
   try
   {
-    window_main_ff_integrator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
+    //window_main_ff_integrator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
+    window_main_ff_integrator(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
+    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/tessellated", L"vulkan");
     //window_main_free_look_vulkan(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"vulkan");
     //window_main_free_look_vulkan(L"data/testscenes/test_35", L"vulkan");
     window_main_free_look_vulkan(L"GI_res", L"vulkan");
