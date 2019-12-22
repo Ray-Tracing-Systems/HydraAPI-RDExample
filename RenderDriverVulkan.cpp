@@ -990,8 +990,9 @@ void RD_Vulkan::BufferManager::endSingleTimeCommands(VkCommandBuffer commandBuff
   vkFreeCommandBuffers(deviceRef, commandPoolRef, 1, &commandBuffer);
 }
 
-void RD_Vulkan::Texture::createTextureImage(uint32_t width, uint32_t height, const uint8_t *image) {
-  VkDeviceSize imageSize = width * height * 4;
+template<typename T>
+void RD_Vulkan::Texture::createTextureImage(uint32_t width, uint32_t height, const T* image, VkFormat format) {
+  VkDeviceSize imageSize = width * height * 4 * sizeof(T);
   mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1;
 
   VkBuffer stagingBuffer;
@@ -1004,13 +1005,13 @@ void RD_Vulkan::Texture::createTextureImage(uint32_t width, uint32_t height, con
   memcpy(data, image, static_cast<size_t>(imageSize));
   vkUnmapMemory(deviceRef, stagingBufferMemory);
 
-  BufferManager::get().createImage(width, height, mipLevels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
+  BufferManager::get().createImage(width, height, mipLevels, VK_SAMPLE_COUNT_1_BIT, format, VK_IMAGE_TILING_OPTIMAL,
     VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
 
-  BufferManager::get().transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
+  BufferManager::get().transitionImageLayout(textureImage, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
   BufferManager::get().copyBufferToImage(stagingBuffer, textureImage, width, height);
-  BufferManager::get().generateMipmaps(textureImage, VK_FORMAT_R8G8B8A8_UNORM, width, height, mipLevels);
+  BufferManager::get().generateMipmaps(textureImage, format, width, height, mipLevels);
 
   vkDestroyBuffer(deviceRef, stagingBuffer, nullptr);
   vkFreeMemory(deviceRef, stagingBufferMemory, nullptr);
@@ -1119,8 +1120,8 @@ VkImageView RD_Vulkan::BufferManager::createImageView(VkImage image, VkFormat fo
   return imageView;
 }
 
-void RD_Vulkan::Texture::createTextureImageView() {
-  textureImageView = BufferManager::get().createImageView(textureImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
+void RD_Vulkan::Texture::createTextureImageView(VkFormat format) {
+  textureImageView = BufferManager::get().createImageView(textureImage, format, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
 }
 
 void RD_Vulkan::createCommandBuffers() {
@@ -1528,6 +1529,10 @@ bool RD_Vulkan::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, 
   if (a_data == nullptr) 
     return false; 
 
+  if (a_texId >= textures.size()) {
+    textures.resize(a_texId + 1);
+  }
+
 	std::vector<uint8_t> convertedData;
 	
 	if (bpp > 4) // well, perhaps this is not error, we just don't support hdr textures in this render
@@ -1550,12 +1555,10 @@ bool RD_Vulkan::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, 
 				convertedData[(y*w + x) * 4 + 3] = uint8_t(clamp(a, 0.0, 1.0) * 255.0f);
 			}
 		}
-	}
-
-  if (a_texId >= textures.size()) {
-    textures.resize(a_texId + 1);
+    textures[a_texId] = std::make_unique<Texture>(device, w, h, reinterpret_cast<const float*>(a_data));
+  } else {
+    textures[a_texId] = std::make_unique<Texture>(device, w, h, reinterpret_cast<const uint8_t*>(a_data));
   }
-  textures[a_texId] = std::make_unique<Texture>(device, w, h, reinterpret_cast<const uint8_t*>(a_data));
 
   return true;
 }

@@ -112,6 +112,14 @@ protected:
   };
 
   class Texture {
+    template<typename T>
+    struct TypeToFormat
+    {
+      enum {
+        format = std::is_same<float, T>::value ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM
+      };
+    };
+
     VkDevice deviceRef;
 
     VkImage textureImage;
@@ -120,13 +128,15 @@ protected:
     VkSampler textureSampler;
     uint32_t mipLevels;
 
-    void createTextureImage(uint32_t width, uint32_t height, const uint8_t* image);
-    void createTextureImageView();
+    template<typename T>
+    void createTextureImage(uint32_t width, uint32_t height, const T* image, VkFormat format);
+    void createTextureImageView(VkFormat format);
     void createTextureSampler();
   public:
-    Texture(VkDevice dev, uint32_t width, uint32_t height, const uint8_t* image) : deviceRef(dev) {
-      createTextureImage(width, height, image);
-      createTextureImageView();
+    template<typename T>
+    Texture(VkDevice dev, uint32_t width, uint32_t height, const T* image) : deviceRef(dev) {
+      createTextureImage(width, height, image, VkFormat(TypeToFormat<T>::format));
+      createTextureImageView(VkFormat(TypeToFormat<T>::format));
       createTextureSampler();
     }
 

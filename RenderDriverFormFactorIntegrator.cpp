@@ -596,13 +596,13 @@ void RD_FFIntegrator::EndScene() {
     for (int i = 0; i < bigQuads.size(); ++i) {
       const int imageSize = tessFactor * tessFactor;
       const int rowStride = tessFactor;
-      std::vector<uint8_t> imgData((tessFactor + 2) * (tessFactor + 2) * 4, 0);
+      std::vector<float> imgData((tessFactor + 2) * (tessFactor + 2) * 4, 0);
       for (int j = 0; j < tessFactor; ++j) {
         for (int k = 0; k < tessFactor; ++k) {
           const int pixelIdx = ((j + 1) * (tessFactor + 2) + k + 1) * 4;
-          imgData[pixelIdx] = min(lighting[i * imageSize + j * rowStride + k].x * 255, 255);
-          imgData[pixelIdx + 1] = min(lighting[i * imageSize + j * rowStride + k].y * 255, 255);
-          imgData[pixelIdx + 2] = min(lighting[i * imageSize + j * rowStride + k].z * 255, 255);
+          imgData[pixelIdx] = lighting[i * imageSize + j * rowStride + k].x;
+          imgData[pixelIdx + 1] = lighting[i * imageSize + j * rowStride + k].y;
+          imgData[pixelIdx + 2] = lighting[i * imageSize + j * rowStride + k].z;
         }
       }
       for (int j = 0; j < tessFactor; ++j) {
@@ -623,7 +623,7 @@ void RD_FFIntegrator::EndScene() {
         imgData[(j * (tessFactor + 2) + tessFactor + 1) * 4 + 1] = imgData[(j * (tessFactor + 2) + tessFactor) * 4 + 1];
         imgData[(j * (tessFactor + 2) + tessFactor + 1) * 4 + 2] = imgData[(j * (tessFactor + 2) + tessFactor) * 4 + 2];
       }
-      auto texId = hrTexture2DCreateFromMemory(tessFactor + 2, tessFactor + 2, 4, imgData.data());
+      auto texId = hrTexture2DCreateFromMemory(tessFactor + 2, tessFactor + 2, 16, imgData.data());
 
       std::wstringstream ss;
       ss << "Mat" << i;
