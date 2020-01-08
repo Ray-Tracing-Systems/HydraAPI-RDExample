@@ -332,14 +332,24 @@ protected:
     };
   };
 
+  struct PipelineConfig {
+    std::string vertexShaderPath, pixelShaderPath;
+    bool hasVertexBuffer = false;
+    VkRenderPass renderPass = {};
+    VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkDescriptorSetLayout descriptorSetLayout;
+  };
+
   void createInstance();
   void pickPhysicalDevice();
   void createLogicalDevice();
   void createSurface();
   void createSwapChain();
   void createImageViews();
-  void createGraphicsPipeline();
-  void createRenderPass();
+  void createPipelines();
+  VkPipeline createGraphicsPipeline(const PipelineConfig&, VkPipelineLayout& layout);
+  void createGbufferRenderPass();
+  void createResolveRenderPass();
   void createFramebuffers();
   void createCommandPool();
   void createCommandBuffers();
@@ -349,11 +359,14 @@ protected:
   void createDefaultTexture();
   void createDepthResources();
   void createColorResources();
+  void createColorSampler();
   VkFormat findDepthFormat();
   QueueFamilyIndices GetQueueFamilyIndex();
   VkSampleCountFlagBits getMaxUsableSampleCount();
 
   void createDescriptorSetLayout();
+  void createDescriptorSets();
+  void createDescriptorPool();
   void updateUniformBuffer(uint32_t current_image);
 
   std::wstring m_libPath;
@@ -394,12 +407,17 @@ protected:
   std::vector<VkImage> swapChainImages;
   std::vector<VkImageView> swapChainImageViews;
   std::vector<VkFramebuffer> swapChainFramebuffers;
+  VkFramebuffer gbufferFramebuffer;
   VkFormat swapChainImageFormat;
   VkExtent2D swapChainExtent;
+  VkDescriptorSetLayout gbufferDescriptorSetLayout;
   VkDescriptorSetLayout descriptorSetLayout;
+  VkPipelineLayout gbufferPipelineLayout;
   VkPipelineLayout pipelineLayout;
-  VkRenderPass renderPass;
+  VkRenderPass gbufferRenderPass;
+  VkRenderPass resolveRenderPass;
   VkPipeline graphicsPipeline;
+  VkPipeline resolvePipeline;
   VkCommandPool commandPool;
   VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
@@ -410,6 +428,14 @@ protected:
   VkImage colorImage;
   VkDeviceMemory colorImageMemory;
   VkImageView colorImageView;
+  VkSampler colorImageSampler;
+
+  VkImage resolvedImage;
+  VkDeviceMemory resolvedImageMemory;
+  VkImageView resolvedImageView;
+
+  VkDescriptorPool descriptorPool;
+  std::vector<VkDescriptorSet> descriptorSets;
 
   size_t currentFrame = 0;
   std::map<int, std::unique_ptr<HydraMesh>> meshes;

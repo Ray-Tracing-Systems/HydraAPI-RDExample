@@ -192,7 +192,7 @@ SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurface
   return details;
 }
 
-void RD_Vulkan::createRenderPass()
+void RD_Vulkan::createGbufferRenderPass()
 {
   VkAttachmentDescription colorAttachment = {};
   colorAttachment.format = swapChainImageFormat;
@@ -225,7 +225,7 @@ void RD_Vulkan::createRenderPass()
   colorAttachmentResolve.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   colorAttachmentResolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
   colorAttachmentResolve.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  colorAttachmentResolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+  colorAttachmentResolve.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
   VkAttachmentReference colorAttachmentRef = {};
   colorAttachmentRef.attachment = 0;
@@ -264,7 +264,54 @@ void RD_Vulkan::createRenderPass()
   renderPassInfo.dependencyCount = 1;
   renderPassInfo.pDependencies = &dependency;
 
-  VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass));
+  VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &gbufferRenderPass));
+}
+
+void RD_Vulkan::createResolveRenderPass()
+{
+  VkAttachmentDescription colorAttachment = {};
+  colorAttachment.format = swapChainImageFormat;
+  colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+
+  colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+  colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+  colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+  VkAttachmentReference colorAttachmentRef = {};
+  colorAttachmentRef.attachment = 0;
+  colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+  VkSubpassDescription subpass = {};
+  subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  subpass.colorAttachmentCount = 1;
+  subpass.pColorAttachments = &colorAttachmentRef;
+  subpass.pDepthStencilAttachment = nullptr;
+  subpass.pResolveAttachments = nullptr;
+
+  VkSubpassDependency dependency = {};
+  dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+  dependency.dstSubpass = 0;
+  dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dependency.srcAccessMask = 0;
+  dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+  std::array<VkAttachmentDescription, 1> attachments = { colorAttachment };
+  VkRenderPassCreateInfo renderPassInfo = {};
+  renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+  renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+  renderPassInfo.pAttachments = attachments.data();
+  renderPassInfo.subpassCount = 1;
+  renderPassInfo.pSubpasses = &subpass;
+  renderPassInfo.dependencyCount = 1;
+  renderPassInfo.pDependencies = &dependency;
+
+  VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &resolveRenderPass));
 }
 
 static std::vector<char> readFile(const std::string& filename)
@@ -299,9 +346,9 @@ VkShaderModule createShaderModule(VkDevice device, const std::vector<char>& code
   return shaderModule;
 }
 
-void RD_Vulkan::createGraphicsPipeline() {
-  auto vertShaderCode = readFile("shaders/vert.spv");
-  auto fragShaderCode = readFile("shaders/frag.spv");
+VkPipeline RD_Vulkan::createGraphicsPipeline(const PipelineConfig& config, VkPipelineLayout& layout) {
+  auto vertShaderCode = readFile(config.vertexShaderPath);
+  auto fragShaderCode = readFile(config.pixelShaderPath);
 
   VkShaderModule vertShaderModule = createShaderModule(device, vertShaderCode);
   VkShaderModule fragShaderModule = createShaderModule(device, fragShaderCode);
@@ -320,15 +367,18 @@ void RD_Vulkan::createGraphicsPipeline() {
 
   std::array<VkPipelineShaderStageCreateInfo, 2> stages = { vertPipelineShaderStageCreateInfo, fragPipelineShaderStageCreateInfo };
 
-  auto bindingDescription = Vertex::getBindingDescription();
-  auto attributeDescriptions = Vertex::getAttributeDescriptions();
-
   VkPipelineVertexInputStateCreateInfo vertexInputStateCreateInfo = {};
   vertexInputStateCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  vertexInputStateCreateInfo.vertexBindingDescriptionCount = 1;
-  vertexInputStateCreateInfo.pVertexBindingDescriptions = &bindingDescription;
-  vertexInputStateCreateInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
-  vertexInputStateCreateInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+  if (config.hasVertexBuffer) {
+    auto bindingDescription = Vertex::getBindingDescription();
+    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    vertexInputStateCreateInfo.vertexBindingDescriptionCount = 1;
+    vertexInputStateCreateInfo.pVertexBindingDescriptions = &bindingDescription;
+    vertexInputStateCreateInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+    vertexInputStateCreateInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
+  } else {
+    vertexInputStateCreateInfo.vertexBindingDescriptionCount = 0;
+  }
 
   VkPipelineInputAssemblyStateCreateInfo inputAssemblyDesc = {};
   inputAssemblyDesc.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -369,7 +419,7 @@ void RD_Vulkan::createGraphicsPipeline() {
   VkPipelineMultisampleStateCreateInfo multisampling = {};
   multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
   multisampling.sampleShadingEnable = VK_FALSE;
-  multisampling.rasterizationSamples = msaaSamples;
+  multisampling.rasterizationSamples = config.msaaSamples;
   multisampling.minSampleShading = 1.0f; // Optional
   multisampling.pSampleMask = nullptr; // Optional
   multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
@@ -409,7 +459,7 @@ void RD_Vulkan::createGraphicsPipeline() {
   VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {};
   pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   pipelineLayoutCreateInfo.setLayoutCount = 1;
-  pipelineLayoutCreateInfo.pSetLayouts = &descriptorSetLayout;
+  pipelineLayoutCreateInfo.pSetLayouts = &config.descriptorSetLayout;
   pipelineLayoutCreateInfo.pushConstantRangeCount = 0; // Optional
   pipelineLayoutCreateInfo.pPushConstantRanges = nullptr; // Optional
 
@@ -425,7 +475,7 @@ void RD_Vulkan::createGraphicsPipeline() {
   depthStencil.front = {}; // Optional
   depthStencil.back = {}; // Optional
 
-  VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayout));
+  VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &layout));
 
   VkGraphicsPipelineCreateInfo graphicsPipelineCreateInfo = {};
   graphicsPipelineCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -439,17 +489,19 @@ void RD_Vulkan::createGraphicsPipeline() {
   graphicsPipelineCreateInfo.pDepthStencilState = nullptr; // Optional
   graphicsPipelineCreateInfo.pColorBlendState = &colorBlending;
   graphicsPipelineCreateInfo.pDynamicState = nullptr; // Optional
-  graphicsPipelineCreateInfo.layout = pipelineLayout;
-  graphicsPipelineCreateInfo.renderPass = renderPass;
+  graphicsPipelineCreateInfo.layout = layout;
+  graphicsPipelineCreateInfo.renderPass = config.renderPass;
   graphicsPipelineCreateInfo.subpass = 0;
   graphicsPipelineCreateInfo.basePipelineHandle = VK_NULL_HANDLE;
   graphicsPipelineCreateInfo.basePipelineIndex = -1; // Optional
   graphicsPipelineCreateInfo.pDepthStencilState = &depthStencil;
 
+  VkPipeline graphicsPipeline = {};
   VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &graphicsPipelineCreateInfo, nullptr, &graphicsPipeline));
 
   vkDestroyShaderModule(device, fragShaderModule, nullptr);
   vkDestroyShaderModule(device, vertShaderModule, nullptr);
+  return graphicsPipeline;
 }
 
 uint32_t findMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties) {
@@ -883,13 +935,27 @@ void RD_Vulkan::createImageViews() {
 }
 
 void RD_Vulkan::createFramebuffers() {
+  std::array<VkImageView, 3> attachments = {
+      colorImageView,
+      depthImageView,
+      resolvedImageView,
+  };
+
+  VkFramebufferCreateInfo framebufferCreateInfo = {};
+  framebufferCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+  framebufferCreateInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+  framebufferCreateInfo.pAttachments = attachments.data();
+  framebufferCreateInfo.width = swapChainExtent.width;
+  framebufferCreateInfo.height = swapChainExtent.height;
+  framebufferCreateInfo.layers = 1;
+  framebufferCreateInfo.renderPass = gbufferRenderPass;
+  VK_CHECK_RESULT(vkCreateFramebuffer(device, &framebufferCreateInfo, nullptr, &gbufferFramebuffer));
+
   swapChainFramebuffers.resize(swapChainImageViews.size());
   for (int i = 0; i < swapChainImages.size(); ++i)
   {
-    std::array<VkImageView, 3> attachments = {
-      colorImageView,
-      depthImageView,
-      swapChainImageViews[i],
+    std::array<VkImageView, 1> attachments = {
+      swapChainImageViews[i]
     };
 
     VkFramebufferCreateInfo framebufferCreateInfo = {};
@@ -899,7 +965,7 @@ void RD_Vulkan::createFramebuffers() {
     framebufferCreateInfo.width = swapChainExtent.width;
     framebufferCreateInfo.height = swapChainExtent.height;
     framebufferCreateInfo.layers = 1;
-    framebufferCreateInfo.renderPass = renderPass;
+    framebufferCreateInfo.renderPass = resolveRenderPass;
     VK_CHECK_RESULT(vkCreateFramebuffer(device, &framebufferCreateInfo, nullptr, &swapChainFramebuffers[i]));
   }
 }
@@ -1143,18 +1209,18 @@ void RD_Vulkan::createCommandBuffers() {
     beginInfo.pInheritanceInfo = nullptr;
     VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffers[i], &beginInfo));
 
-    VkRenderPassBeginInfo renderPassBeginInfo = {};
-    renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassBeginInfo.renderPass = renderPass;
-    renderPassBeginInfo.framebuffer = swapChainFramebuffers[i];
-    renderPassBeginInfo.renderArea.offset = {0, 0};
-    renderPassBeginInfo.renderArea.extent = swapChainExtent;
-    std::array<VkClearValue, 2> clearValues = {};
-    clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-    clearValues[1].depthStencil = { 1.0f, 0 };
-    renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-    renderPassBeginInfo.pClearValues = clearValues.data();
-    vkCmdBeginRenderPass(commandBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+    VkRenderPassBeginInfo gbufferRenderPassBeginInfo = {};
+    gbufferRenderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    gbufferRenderPassBeginInfo.renderPass = gbufferRenderPass;
+    gbufferRenderPassBeginInfo.framebuffer = gbufferFramebuffer;
+    gbufferRenderPassBeginInfo.renderArea.offset = {0, 0};
+    gbufferRenderPassBeginInfo.renderArea.extent = swapChainExtent;
+    std::array<VkClearValue, 2> gbufferClearValues = {};
+    gbufferClearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+    gbufferClearValues[1].depthStencil = { 1.0f, 0 };
+    gbufferRenderPassBeginInfo.clearValueCount = static_cast<uint32_t>(gbufferClearValues.size());
+    gbufferRenderPassBeginInfo.pClearValues = gbufferClearValues.data();
+    vkCmdBeginRenderPass(commandBuffers[i], &gbufferRenderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
     vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
@@ -1162,10 +1228,29 @@ void RD_Vulkan::createCommandBuffers() {
       for (int j = 0; j < instance.size(); ++j) {
         const Mesh &mesh = meshes[instance[j]->getMeshId()]->getMesh(j);
         mesh.bind(commandBuffers[i]);
-        instance[j]->bind(commandBuffers[i], pipelineLayout, i);
+        instance[j]->bind(commandBuffers[i], gbufferPipelineLayout, i);
         vkCmdDrawIndexed(commandBuffers[i], mesh.getIndicesCount(), 1, 0, 0, 0);
       }
     }
+
+    vkCmdEndRenderPass(commandBuffers[i]);
+
+    VkRenderPassBeginInfo renderPassBeginInfo = {};
+    renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassBeginInfo.renderPass = resolveRenderPass;
+    renderPassBeginInfo.framebuffer = swapChainFramebuffers[i];
+    renderPassBeginInfo.renderArea.offset = { 0, 0 };
+    renderPassBeginInfo.renderArea.extent = swapChainExtent;
+    std::array<VkClearValue, 1> clearValues = {};
+    clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+    renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+    renderPassBeginInfo.pClearValues = clearValues.data();
+    vkCmdBeginRenderPass(commandBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, resolvePipeline);
+    vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[i], 0, nullptr);
+    vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+
     vkCmdEndRenderPass(commandBuffers[i]);
     VK_CHECK_RESULT(vkEndCommandBuffer(commandBuffers[i]));
   }
@@ -1203,14 +1288,26 @@ void RD_Vulkan::cleanupSwapChain() {
   vkDestroyImage(device, depthImage, nullptr);
   vkFreeMemory(device, depthImageMemory, nullptr);
 
+  vkDestroyImageView(device, resolvedImageView, nullptr);
+  vkDestroyImage(device, resolvedImage, nullptr);
+  vkFreeMemory(device, resolvedImageMemory, nullptr);
+  vkDestroySampler(device, colorImageSampler, nullptr);
+
+  vkDestroyDescriptorPool(device, descriptorPool, nullptr);
+
+  vkDestroyFramebuffer(device, gbufferFramebuffer, nullptr);
+
   for (auto framebuffer : swapChainFramebuffers) {
     vkDestroyFramebuffer(device, framebuffer, nullptr);
   }
   vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
 
   vkDestroyPipeline(device, graphicsPipeline, nullptr);
+  vkDestroyPipeline(device, resolvePipeline, nullptr);
+  vkDestroyPipelineLayout(device, gbufferPipelineLayout, nullptr);
   vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-  vkDestroyRenderPass(device, renderPass, nullptr);
+  vkDestroyRenderPass(device, gbufferRenderPass, nullptr);
+  vkDestroyRenderPass(device, resolveRenderPass, nullptr);
 
   for (auto imageView : swapChainImageViews) {
     vkDestroyImageView(device, imageView, nullptr);
@@ -1221,6 +1318,24 @@ void RD_Vulkan::cleanupSwapChain() {
   instances.clear();
 }
 
+void RD_Vulkan::createPipelines() {
+  PipelineConfig geometryConfig;
+  geometryConfig.vertexShaderPath = "shaders/vert.spv";
+  geometryConfig.pixelShaderPath = "shaders/frag.spv";
+  geometryConfig.hasVertexBuffer = true;
+  geometryConfig.renderPass = gbufferRenderPass;
+  geometryConfig.msaaSamples = msaaSamples;
+  geometryConfig.descriptorSetLayout = gbufferDescriptorSetLayout;
+  graphicsPipeline = createGraphicsPipeline(geometryConfig, gbufferPipelineLayout);
+  PipelineConfig resolveConfig;
+  resolveConfig.vertexShaderPath = "shaders/full_screen.spv";
+  resolveConfig.pixelShaderPath = "shaders/resolve.spv";
+  resolveConfig.hasVertexBuffer = false;
+  resolveConfig.renderPass = resolveRenderPass;
+  resolveConfig.descriptorSetLayout = descriptorSetLayout;
+  resolvePipeline = createGraphicsPipeline(resolveConfig, pipelineLayout);
+}
+
 void RD_Vulkan::recreateSwapChain() {
   vkDeviceWaitIdle(device);
 
@@ -1228,8 +1343,9 @@ void RD_Vulkan::recreateSwapChain() {
 
   createSwapChain();
   createImageViews();
-  createRenderPass();
-  createGraphicsPipeline();
+  createGbufferRenderPass();
+  createResolveRenderPass();
+  createPipelines();
   createColorResources();
   createDepthResources();
   createFramebuffers();
@@ -1251,13 +1367,68 @@ void RD_Vulkan::createDescriptorSetLayout() {
   samplerLayoutBinding.pImmutableSamplers = nullptr;
   samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-  std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, samplerLayoutBinding };
+  std::array<VkDescriptorSetLayoutBinding, 2> gbufferBindings = { uboLayoutBinding, samplerLayoutBinding };
+  VkDescriptorSetLayoutCreateInfo gbufferLayoutInfo = {};
+  gbufferLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  gbufferLayoutInfo.bindingCount = static_cast<uint32_t>(gbufferBindings.size());
+  gbufferLayoutInfo.pBindings = gbufferBindings.data();
+
+  VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &gbufferLayoutInfo, nullptr, &gbufferDescriptorSetLayout));
+
+  std::array<VkDescriptorSetLayoutBinding, 1> bindings = { samplerLayoutBinding };
   VkDescriptorSetLayoutCreateInfo layoutInfo = {};
   layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
   layoutInfo.pBindings = bindings.data();
 
   VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout));
+}
+
+void RD_Vulkan::createDescriptorPool() {
+  std::array<VkDescriptorPoolSize, 2> poolSizes = {};
+  poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+  poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+
+  VkDescriptorPoolCreateInfo poolInfo = {};
+  poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+  poolInfo.pPoolSizes = poolSizes.data();
+  poolInfo.maxSets = static_cast<uint32_t>(swapChainImages.size());
+
+  VK_CHECK_RESULT(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
+}
+
+void RD_Vulkan::createDescriptorSets() {
+  std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
+  VkDescriptorSetAllocateInfo allocInfo = {};
+  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  allocInfo.descriptorPool = descriptorPool;
+  allocInfo.descriptorSetCount = static_cast<uint32_t>(swapChainImages.size());
+  allocInfo.pSetLayouts = layouts.data();
+
+  descriptorSets.resize(swapChainImages.size());
+  VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()));
+
+  for (size_t i = 0; i < swapChainImages.size(); i++) {
+    std::vector<VkWriteDescriptorSet> descriptorWrites(1);
+    
+    VkDescriptorImageInfo imageInfo = {};
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    imageInfo.imageView = resolvedImageView;
+    imageInfo.sampler = colorImageSampler;
+
+    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[0].dstSet = descriptorSets[i];
+    descriptorWrites[0].dstBinding = 1;
+    descriptorWrites[0].dstArrayElement = 0;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[0].descriptorCount = 1;
+    descriptorWrites[0].pImageInfo = &imageInfo;
+
+    vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+  }
 }
 
 void RD_Vulkan::InstancesCollection::createUniformBuffers() {
@@ -1346,9 +1517,9 @@ void RD_Vulkan::Texture::createTextureSampler() {
   samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
   samplerInfo.magFilter = VK_FILTER_LINEAR;
   samplerInfo.minFilter = VK_FILTER_LINEAR;
-  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
   samplerInfo.anisotropyEnable = VK_TRUE;
   samplerInfo.maxAnisotropy = 16;
   samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
@@ -1361,6 +1532,28 @@ void RD_Vulkan::Texture::createTextureSampler() {
   samplerInfo.maxLod = static_cast<float>(mipLevels);
 
   VK_CHECK_RESULT(vkCreateSampler(deviceRef, &samplerInfo, nullptr, &textureSampler));
+}
+
+void RD_Vulkan::createColorSampler() {
+  VkSamplerCreateInfo samplerInfo = {};
+  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  samplerInfo.magFilter = VK_FILTER_LINEAR;
+  samplerInfo.minFilter = VK_FILTER_LINEAR;
+  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.anisotropyEnable = VK_TRUE;
+  samplerInfo.maxAnisotropy = 16;
+  samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+  samplerInfo.unnormalizedCoordinates = VK_FALSE;
+  samplerInfo.compareEnable = VK_FALSE;
+  samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+  samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  samplerInfo.mipLodBias = 0.0f;
+  samplerInfo.minLod = 0;
+  samplerInfo.maxLod = 1;
+
+  VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &colorImageSampler));
 }
 
 VkSampleCountFlagBits RD_Vulkan::getMaxUsableSampleCount() {
@@ -1401,6 +1594,14 @@ void RD_Vulkan::createColorResources() {
   colorImageView = BufferManager::get().createImageView(colorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 
   BufferManager::get().transitionImageLayout(colorImage, colorFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1);
+
+  BufferManager::get().createImage(swapChainExtent.width, swapChainExtent.height, 1, VK_SAMPLE_COUNT_1_BIT, colorFormat, VK_IMAGE_TILING_OPTIMAL,
+    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, resolvedImage, resolvedImageMemory);
+  resolvedImageView = BufferManager::get().createImageView(resolvedImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+
+  BufferManager::get().transitionImageLayout(resolvedImage, colorFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1);
+
+  createColorSampler();
 }
 
 VkFormat RD_Vulkan::BufferManager::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
@@ -1435,13 +1636,16 @@ RD_Vulkan::RD_Vulkan()
   createSwapChain();
   BufferManager::get().init(physicalDevice, device, commandPool, graphicsQueue);
   createImageViews();
-  createRenderPass();
+  createGbufferRenderPass();
+  createResolveRenderPass();
   createDescriptorSetLayout();
-  createGraphicsPipeline();
+  createPipelines();
   createCommandPool();
   BufferManager::get().init(physicalDevice, device, commandPool, graphicsQueue);
   createColorResources();
   createDepthResources();
+  createDescriptorPool();
+  createDescriptorSets();
   createFramebuffers();
   createDefaultTexture();
   createCommandBuffers();
@@ -1476,6 +1680,7 @@ RD_Vulkan::~RD_Vulkan()
   textures.clear();
 
   vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
+  vkDestroyDescriptorSetLayout(device, gbufferDescriptorSetLayout, nullptr);
 
   meshes.clear();
 
@@ -1932,7 +2137,7 @@ void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32
       Texture* tex = materials[materialId].textureIdx != -1 ? textures[materials[materialId].textureIdx].get() : defaultTexture.get();
       const float3& col = materials[materialId].color;
       float4 color = { col.x, col.y, col.z, 1 };
-      instances.back().push_back(std::make_unique<InstancesCollection>(device, descriptorSetLayout, tex, a_mesh_id, static_cast<int>(swapChainImages.size()), color));
+      instances.back().push_back(std::make_unique<InstancesCollection>(device, gbufferDescriptorSetLayout, tex, a_mesh_id, static_cast<int>(swapChainImages.size()), color));
     }
     createCommandBuffers();
   }
