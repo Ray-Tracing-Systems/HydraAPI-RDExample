@@ -6,20 +6,24 @@
 #include "HydraRenderDriverAPI.h"
 
 
-struct RD_FFIntegrator : public IHRRenderDriver {
-  template<size_t N>
-  struct Polygon {
-    static const size_t POINTS_COUNT = N;
-    std::array<HydraLiteMath::float4, N> points;
-    std::array<HydraLiteMath::float2, N> texCoords;
-    std::optional<std::array<HydraLiteMath::float4, N>> normal;
-    std::optional<std::array<HydraLiteMath::float4, N>> tangent;
-    uint32_t materialId = 0;
-  };
+using ScenePolygon = std::vector<uint32_t>;
 
-  using Triangle = Polygon<3>;
-  using Quad = Polygon<4>;
+struct Scene
+{
+  std::vector<HydraLiteMath::float4> positions;
+  std::vector<HydraLiteMath::float4> normals;
+  std::vector<HydraLiteMath::float2> texCoords;
+  std::vector<HydraLiteMath::float4> tangents;
 
+  std::vector<uint32_t> materials;
+  std::vector<ScenePolygon> polygons;
+
+  void addScene(const Scene& scene);
+  uint32_t addMidVertex(uint32_t idx1, uint32_t idx2, float t);
+  void compress();
+};
+
+struct RD_VoxelTessellator : public IHRRenderDriver {
   void ClearAll() override {}
   HRDriverAllocInfo AllocAll(HRDriverAllocInfo a_info) override { return a_info; }
   bool UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, const void* a_data, pugi::xml_node a_texNode) override { return false; }
@@ -31,9 +35,6 @@ struct RD_FFIntegrator : public IHRRenderDriver {
   bool UpdateCamera(pugi::xml_node a_camNode) override { return false; }
   bool UpdateSettings(pugi::xml_node a_settingsNode) override { return false; }
   void BeginScene(pugi::xml_node a_sceneNode) override;
-  void ComputeFF(const int& quadsCount, std::vector<RD_FFIntegrator::Quad>& bigQuads);
-  std::vector<HydraLiteMath::float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<HydraLiteMath::float3>& emission, const std::vector<HydraLiteMath::float3>& colors);
-  std::vector<HydraLiteMath::float3> RD_FFIntegrator::ComputeLightingRandom(const std::vector<HydraLiteMath::float3>& emission, const std::vector<HydraLiteMath::float3>& colors);
   void EndScene() override;
   void InstanceMeshes(int32_t a_mesh_id, const float* a_matrix, int32_t a_instNum, const int* a_lightInstId, const int* a_remapId, const int* a_realInstId) override;
   void InstanceLights(int32_t a_light_id, const float* a_matrix, pugi::xml_node* a_custAttrArray, int32_t a_instNum, int32_t a_lightGroupId) override {}
@@ -48,11 +49,10 @@ struct RD_FFIntegrator : public IHRRenderDriver {
   std::vector<int>  allRemapLists;
   std::vector<HydraLiteMath::int2> tableOffsetsAndSize;
 
-  std::map<int, std::vector<Quad>> meshQuads;
-  std::vector<Quad> instanceQuads;
-  std::vector<std::vector<float>> FF;
+  std::map<int, Scene> meshes;
 
-  std::vector<Quad> bigQuads;
+  Scene fullScene;
+
   std::map<int, HydraLiteMath::float3> matColors;
   std::map<int, HydraLiteMath::float3> matEmission;
 };

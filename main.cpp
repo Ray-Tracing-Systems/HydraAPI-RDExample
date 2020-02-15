@@ -43,6 +43,7 @@ void window_main_free_look_vulkan(const wchar_t* a_libPath, const wchar_t* a_ren
                            InitFuncType a_pInitFunc = nullptr, DrawFuncType a_pDrawFunc = nullptr);
 
 void window_main_ff_integrator(const wchar_t* a_libPath, const wchar_t* a_renderName, bool recomputeFF, bool noInterpolation);
+void window_main_voxel_tessellator(const wchar_t* a_libPath, const wchar_t* a_renderName, float voxel_size);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////// GLFW
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////// GLFW
@@ -99,6 +100,7 @@ int main(int argc, const char** argv)
   registerAllVulkanDrivers();
   registerAllGL1Drivers();
   registerAllFFIntegratorDrivers();
+  registerAllVoxelTessellatorDrivers();
 
   hrInfoCallback(&InfoCallBack);
   hrErrorCallerPlace(L"main");  // for debug needs only
@@ -143,20 +145,44 @@ int main(int argc, const char** argv)
 #endif
   
   std::cout << "sizeof(size_t) = " << sizeof(size_t) <<std::endl;
+
+  bool recomputeFF = false;
+  bool noInterpolation = false;
+  float voxelSize = 0.25;
+  for (int i = 1; i < argc; ++i) {
+    recomputeFF |= strcmp(argv[i], "-recomputeFF") == 0;
+    noInterpolation |= strcmp(argv[i], "-noInterpolation") == 0;
+    if (strcmp(argv[i], "-voxelSize") == 0 && i + 1 < argc) {
+      voxelSize = std::stof(argv[i + 1]);
+    }
+  }
   
-  //window_main_ff_integrator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
-  //window_main_ff_integrator(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
-  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/tessellated", L"vulkan");
-  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"vulkan");
-  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/03_CornellBoxWithComplexShape/scenelib", L"vulkan");
-  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/04_CornellBoxWithSeveralComplexShape/scenelib", L"vulkan");
-  window_main_free_look_vulkan(L"../Diser/DiffuseReference/05_Sponza/scenelib", L"vulkan");
-  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/06_Indoor/scenelib", L"vulkan");
-  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/07_Outdoor/scenelib", L"vulkan");
-  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/08_BigScene/scenelib", L"vulkan");
-  //window_main_free_look_vulkan(L"data/testscenes/test_35", L"vulkan");
-  //window_main_free_look_vulkan(L"GI_res", L"vulkan");
-  //window_main_free_look(L"data/testscenes/test_42", L"opengl1");
+  //try
+  //{
+    //window_main_ff_integrator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
+    //window_main_ff_integrator(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
+    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/tessellated", L"vulkan");
+    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"vulkan");
+    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/03_CornellBoxWithComplexShape/scenelib", L"vulkan");
+    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/04_CornellBoxWithSeveralComplexShape/scenelib", L"vulkan");
+    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/05_Sponza/scenelib", L"vulkan");
+    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/06_Indoor/scenelib", L"vulkan");
+    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/07_Outdoor/scenelib", L"vulkan");
+    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/08_BigScene/scenelib", L"vulkan");
+    //window_main_free_look_vulkan(L"data/testscenes/test_35", L"vulkan");
+    //window_main_voxel_tessellator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/scenelib", L"voxelTessellator", voxelSize);
+    window_main_voxel_tessellator(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/scenelib", L"voxelTessellator", voxelSize);
+    window_main_free_look_vulkan(L"Tessellated", L"vulkan");
+    //window_main_free_look(L"data/testscenes/test_42", L"opengl1");
+  //}
+  //catch (std::runtime_error& e)
+  //{
+  //  std::cout << "std::runtime_error: " << e.what() << std::endl;
+  //}
+  //catch (...)
+  //{
+  //  std::cout << "unknown exception" << std::endl;
+  //}
 
   hrErrorCallerPlace(L"main"); // for debug needs only
 

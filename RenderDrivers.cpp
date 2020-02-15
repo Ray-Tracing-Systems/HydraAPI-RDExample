@@ -98,6 +98,31 @@ void registerAllFFIntegratorDrivers()
   registerFFIntegratorDrivers();
 }
 
+void registerVoxelTessellatorDrivers()
+{
+  HRDriverInfo integrator_info;
+  integrator_info.supportHDRFrameBuffer = false;
+  integrator_info.supportHDRTextures = false;
+  integrator_info.supportMultiMaterialInstance = false;
+
+  integrator_info.supportImageLoadFromInternalFormat = false;
+  integrator_info.supportImageLoadFromExternalFormat = false;
+  integrator_info.supportMeshLoadFromInternalFormat = false;
+  integrator_info.supportLighting = false;
+
+  integrator_info.memTotal = int64_t(8) * int64_t(1024 * 1024 * 1024);
+
+  integrator_info.driverName = L"voxelTessellator";
+  integrator_info.createFunction = CreateVoxelTessellator_RenderDriver;
+
+  RenderDriverFactory::Register(L"voxelTessellator", integrator_info);
+}
+
+void registerAllVoxelTessellatorDrivers()
+{
+  registerVoxelTessellatorDrivers();
+}
+
 void printAllAvailableDrivers()
 {
   auto drivers = RenderDriverFactory::GetListOfRegisteredDrivers();
