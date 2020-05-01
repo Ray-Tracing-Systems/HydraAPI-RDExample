@@ -3,6 +3,9 @@
 // PVS-Studio Static Code Analyzer for C, C++, C#, and Java: http://www.viva64.com
 
 #include <array>
+#include <chrono>
+
+#include <cassert>
 
 #include <embree3/rtcore.h>
 #include <omp.h>
@@ -33,7 +36,7 @@ HRRenderUpdateInfo RD_FFIntegrator::HaveUpdateNow(int a_maxRaysPerPixel)
   return res;
 }
 
-static std::vector<RD_FFIntegrator::Quad> gen_quads(const HRMeshDriverInput& a_input) {
+static std::vector<RD_FFIntegrator::Triangle> gen_triangles(const HRMeshDriverInput& a_input) {
 
   std::vector<RD_FFIntegrator::Triangle> triangles;
   const uint32_t* indices = reinterpret_cast<const uint32_t*>(a_input.indices);
@@ -68,70 +71,8 @@ static std::vector<RD_FFIntegrator::Quad> gen_quads(const HRMeshDriverInput& a_i
     tri.materialId = materials[i / 3];
     triangles.push_back(tri);
   }
+  return triangles;
 
-  std::vector<int> cornerPoints(triangles.size(), 0);
-  for (size_t i = 0; i < cornerPoints.size(); ++i) {
-    float4 v1 = triangles[i].points[1] - triangles[i].points[0];
-    float4 v2 = triangles[i].points[2] - triangles[i].points[0];
-    if (dot3(v1, v2) < 1e-5) {
-      cornerPoints[i] = 0;
-      continue;
-    }
-    v1 = triangles[i].points[0] - triangles[i].points[1];
-    v2 = triangles[i].points[2] - triangles[i].points[1];
-    if (dot3(v1, v2) < 1e-5) {
-      cornerPoints[i] = 1;
-      continue;
-    }
-    v1 = triangles[i].points[1] - triangles[i].points[2];
-    v2 = triangles[i].points[0] - triangles[i].points[2];
-    if (dot3(v1, v2) < 1e-5) {
-      cornerPoints[i] = 2;
-      continue;
-    }
-    throw "Triangle without 90 deg angle!";
-  }
-
-  std::vector<RD_FFIntegrator::Quad> quads;
-  for (size_t i = 0; i < triangles.size(); ++i) {
-    for (size_t j = i + 1; j < triangles.size(); ++j) {
-      if (triangles[i].materialId != triangles[j].materialId) {
-        continue;
-      }
-      const int t1Next = (cornerPoints[i] + 1) % 3;
-      const int t1Prev = (cornerPoints[i] + 2) % 3;
-      const int t2Next = (cornerPoints[j] + 2) % 3;
-      const int t2Prev = (cornerPoints[j] + 1) % 3;
-      const bool pos1Match = length3(triangles[i].points[t1Next] - triangles[j].points[t2Prev]) < 1e-3;
-      const bool pos2Match = length3(triangles[i].points[t1Prev] - triangles[j].points[t2Next]) < 1e-3;
-      const bool normal1Match = length3(triangles[i].normal.value()[t1Next] - triangles[j].normal.value()[t2Prev]) < 1e-3;
-      const bool normal2Match = length3(triangles[i].normal.value()[t1Prev] - triangles[j].normal.value()[t2Next]) < 1e-3;
-      if (pos1Match && pos2Match && normal1Match && normal2Match) {
-        RD_FFIntegrator::Quad q;
-        q.materialId = triangles[i].materialId;
-        std::array<std::pair<int, int>, 4> indices = { std::make_pair(i, cornerPoints[i]), std::make_pair(i, t1Next),
-          std::make_pair(j, cornerPoints[j]), std::make_pair(i, t1Prev) };
-        if (hasNormals) {
-          q.normal.emplace(std::array<float4, RD_FFIntegrator::Quad::POINTS_COUNT>());
-        }
-        if (hasTangent) {
-          q.tangent.emplace(std::array<float4, RD_FFIntegrator::Quad::POINTS_COUNT>());
-        }
-        for (size_t k = 0; k < RD_FFIntegrator::Quad::POINTS_COUNT; ++k) {
-          q.points[k] = triangles[indices[k].first].points[indices[k].second];
-          q.texCoords[k] = triangles[indices[k].first].texCoords[indices[k].second];
-          if (hasNormals) {
-            q.normal.value()[k] = triangles[indices[k].first].normal.value()[indices[k].second];
-          }
-          if (hasTangent) {
-            q.tangent.value()[k] = triangles[indices[k].first].tangent.value()[indices[k].second];
-          }
-        }
-        quads.push_back(q);
-      }
-    }
-  }
-  return quads;
 }
 
 void RD_FFIntegrator::BeginScene(pugi::xml_node a_sceneNode)
@@ -164,7 +105,7 @@ void RD_FFIntegrator::BeginScene(pugi::xml_node a_sceneNode)
 }
 
 bool RD_FFIntegrator::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HRMeshDriverInput& a_input, const HRBatchInfo* a_batchList, int32_t listSize) {
-  meshQuads[a_meshId] = gen_quads(a_input);
+  meshTriangles[a_meshId] = gen_triangles(a_input);
   return true;
 }
 
@@ -187,37 +128,37 @@ void RD_FFIntegrator::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices,
   }
 
   for (int i = 0; i < a_instNum; ++i) {
-    const auto& mesh = meshQuads[a_mesh_id];
-    for (const Quad& q : mesh) {
-      Quad instancedQuad;
+    const auto& mesh = meshTriangles[a_mesh_id];
+    for (const Triangle& q : mesh) {
+      Triangle instancedTriangle;
       if (q.normal.has_value()) {
-        instancedQuad.normal = std::array<float4, 4>();
+        instancedTriangle.normal = std::array<float4, 3>();
       }
       if (q.tangent.has_value()) {
-        instancedQuad.tangent = std::array<float4, 4>();
+        instancedTriangle.tangent = std::array<float4, 3>();
       }
-      for (int j = 0; j < instancedQuad.points.size(); ++j) {
-        instancedQuad.points[j] = mul(models[i], q.points[j]);
+      for (int j = 0; j < instancedTriangle.points.size(); ++j) {
+        instancedTriangle.points[j] = mul(models[i], q.points[j]);
         if (q.normal.has_value()) {
-          instancedQuad.normal.value()[j] = mul(models[i], q.normal.value()[j]);
+          instancedTriangle.normal.value()[j] = mul(models[i], q.normal.value()[j]);
         }
         if (q.tangent.has_value()) {
-          instancedQuad.tangent.value()[j] = mul(models[i], q.tangent.value()[j]);
+          instancedTriangle.tangent.value()[j] = mul(models[i], q.tangent.value()[j]);
         }
-        instancedQuad.texCoords[j] = q.texCoords[j];
+        instancedTriangle.texCoords[j] = q.texCoords[j];
       }
-      instancedQuad.materialId = q.materialId;
+      instancedTriangle.materialId = q.materialId;
       if (a_remapId[i] != -1) {
         const int jBegin = tableOffsetsAndSize[a_remapId[i]].x;
         const int jEnd = tableOffsetsAndSize[a_remapId[i]].x + tableOffsetsAndSize[a_remapId[i]].y;
         for (int j = jBegin; j < jEnd; j += 2) {
-          if (allRemapLists[j] == instancedQuad.materialId) {
-            instancedQuad.materialId = allRemapLists[j + 1];
+          if (allRemapLists[j] == instancedTriangle.materialId) {
+            instancedTriangle.materialId = allRemapLists[j + 1];
             break;
           }
         }
       }
-      instanceQuads.push_back(instancedQuad);
+      instanceTriangles.push_back(instancedTriangle);
     }
   }
 }
@@ -290,22 +231,25 @@ float2 hammersley2d(uint32_t i, uint32_t N) {
   return float2(float(i) / float(N), radicalInverse_VdC(i));
 }
 
-static std::vector<std::vector<Sample>> gen_samples(const std::vector<RD_FFIntegrator::Quad>& quads) {
-  const int PER_AXIS_COUNT = 4;
+static std::vector<std::vector<Sample>> gen_samples(const std::vector<RD_FFIntegrator::Triangle>& triangles) {
+  const int PER_AXIS_COUNT = 2;
   const int SAMPLES_COUNT = PER_AXIS_COUNT * PER_AXIS_COUNT;
-  std::vector<float2> randomValues(SAMPLES_COUNT);
+  std::vector<float3> randomValues(SAMPLES_COUNT);
   for (int i = 0; i < SAMPLES_COUNT; ++i) {
-    randomValues[i] = hammersley2d(i / PER_AXIS_COUNT, i % PER_AXIS_COUNT);
+    //randomValues[i] = hammersley2d(i / PER_AXIS_COUNT, i % PER_AXIS_COUNT);
     randomValues[i].x = static_cast<float>(rand()) / RAND_MAX;
     randomValues[i].y = static_cast<float>(rand()) / RAND_MAX;
+    randomValues[i].z = static_cast<float>(rand()) / RAND_MAX;
+    float sum = dot(randomValues[i], float3(1, 1, 1));
+    randomValues[i] /= sum;
   }
   std::vector<std::vector<Sample>> samples;
-  for (int i = 0; i < quads.size(); ++i) {
+  for (int i = 0; i < triangles.size(); ++i) {
     std::vector<Sample> sm(SAMPLES_COUNT);
     for (int j = 0; j < SAMPLES_COUNT; ++j) {
-      float4 pos = lerpSquare(quads[i].points[0], quads[i].points[1], quads[i].points[2], quads[i].points[3], randomValues[j].x, randomValues[j].y);
-      const auto& normArray = quads[i].normal.value();
-      float4 normal = lerpSquare(normArray[0], normArray[1], normArray[2], normArray[3], randomValues[j].x, randomValues[j].y);
+      float4 pos = randomValues[j].x * triangles[i].points[0] + randomValues[j].y * triangles[i].points[1] + randomValues[j].z * triangles[i].points[2];
+      const auto& normArray = triangles[i].normal.value();
+      float4 normal = randomValues[j].x * normArray[0] + randomValues[j].y * normArray[1] + randomValues[j].z * normArray[2];
       sm[j].pos = float3(pos.x, pos.y, pos.z);
       sm[j].normal = normalize(float3(normal.x, normal.y, normal.z));
     }
@@ -314,8 +258,11 @@ static std::vector<std::vector<Sample>> gen_samples(const std::vector<RD_FFInteg
   return samples;
 }
 
-static float quad_square(const RD_FFIntegrator::Quad& quad) {
-  return length3(quad.points[0] - quad.points[1]) * length3(quad.points[0] - quad.points[3]);
+static float triangle_square(const RD_FFIntegrator::Triangle& triangle) {
+  const float3 p0(triangle.points[0].x, triangle.points[0].y, triangle.points[0].z);
+  const float3 p1(triangle.points[1].x, triangle.points[1].y, triangle.points[1].z);
+  const float3 p2(triangle.points[2].x, triangle.points[2].y, triangle.points[2].z);
+  return length(cross(p1 - p0, p2 - p0)) * 0.5;
 }
 
 
@@ -373,19 +320,14 @@ class EmbreeTracer {
   RTCIntersectContext IntersectionContext;
 
 public:
-  EmbreeTracer(const std::vector<RD_FFIntegrator::Quad>& quads) {
-    std::vector<float3> points(quads.size() * 4);
-    std::vector<uint32_t> indices(quads.size() * 6);
-    for (int i = 0; i < quads.size(); ++i) {
-      for (int j = 0; j < 4; ++j) {
-        points[i * 4 + j] = make_float3(quads[i].points[j]);
+  EmbreeTracer(const std::vector<RD_FFIntegrator::Triangle>& triangles) {
+    std::vector<float3> points(triangles.size() * 3);
+    std::vector<uint32_t> indices(triangles.size() * 3);
+    for (int i = 0; i < triangles.size(); ++i) {
+      for (int j = 0; j < 3; ++j) {
+        points[i * 3 + j] = make_float3(triangles[i].points[j]);
+        indices[i * 3 + j] = i * 3 + j;
       }
-      indices[i * 6 + 0] = i * 4 + 0;
-      indices[i * 6 + 1] = i * 4 + 1;
-      indices[i * 6 + 2] = i * 4 + 2;
-      indices[i * 6 + 3] = i * 4 + 0;
-      indices[i * 6 + 4] = i * 4 + 2;
-      indices[i * 6 + 5] = i * 4 + 3;
     }
 
     Device = rtcNewDevice(""); CHECK_EMBREE
@@ -407,45 +349,41 @@ public:
 
     RTCBounds bounds;
     rtcGetSceneBounds(Scene, &bounds);
-    std::cout << bounds.align0 << std::endl;
   }
 
-  std::vector<uint8_t> traceRays(const std::vector<Sample>& samples1, const std::vector<Sample>& samples2) {
-    std::vector<uint8_t> result;
-    result.resize(samples1.size() * samples2.size());
-    int last = 0;
-    const int PACKET_SIZE = 16;
-    for (int i = 0; i < samples1.size(); ++i) {
+  uint16_t traceRays(const std::vector<Sample>& samples1, const std::vector<Sample>& samples2) {
+    uint16_t result = 0;
+    const int PACKET_SIZE = 4;
+    RTCRay16 raysPacket;
+    for (int i = 0, target_id = 0; i < samples1.size(); ++i) {
       const Sample& s1 = samples1[i];
-      for (int j = 0; j < samples2.size(); j += PACKET_SIZE) {
-        RTCRay16 raysPacket;
-        RTCRayHit16 raysPacketDebug;
-        for (int k = 0; k < PACKET_SIZE; ++k) {
-          const Sample& s2 = samples2[j + k];
-          const float BIAS = 1e-5f;
-          float3 dir = s2.pos - s1.pos;
-          raysPacket.org_x[k] = s1.pos.x;
-          raysPacket.org_y[k] = s1.pos.y;
-          raysPacket.org_z[k] = s1.pos.z;
-          raysPacket.tnear[k] = BIAS;
-          raysPacket.dir_x[k] = dir.x;
-          raysPacket.dir_y[k] = dir.y;
-          raysPacket.dir_z[k] = dir.z;
-          raysPacket.tfar[k] = 1.f - BIAS;
-          raysPacket.id[k] = 0;
-          raysPacket.mask[k] = 0;
-          raysPacket.time[k] = 0;
-        }
-        const int validMask = ~0u;
-        rtcOccluded16(&validMask, Scene, &IntersectionContext, &raysPacket); CHECK_EMBREE
-
-        for (int k = 0; k < PACKET_SIZE; ++k) {
-          result[last++] = std::isinf(raysPacket.tfar[k]);
-        }
+      for (int j = 0; j < samples2.size(); ++j, ++target_id) {
+        const Sample& s2 = samples2[j];
+        const float BIAS = 1e-5f;
+        float3 dir = s2.pos - s1.pos;
+        raysPacket.org_x[target_id] = s1.pos.x;
+        raysPacket.org_y[target_id] = s1.pos.y;
+        raysPacket.org_z[target_id] = s1.pos.z;
+        raysPacket.tnear[target_id] = BIAS;
+        raysPacket.dir_x[target_id] = dir.x;
+        raysPacket.dir_y[target_id] = dir.y;
+        raysPacket.dir_z[target_id] = dir.z;
+        raysPacket.tfar[target_id] = 1.f - BIAS;
+        raysPacket.id[target_id] = 0;
+        raysPacket.mask[target_id] = 0;
+        raysPacket.time[target_id] = 0;
       }
     }
 
-    result.resize(last);
+    const int validMask = ~0u;
+    rtcOccluded16(&validMask, Scene, &IntersectionContext, &raysPacket); CHECK_EMBREE
+
+    for (uint32_t k = 0; k < PACKET_SIZE * PACKET_SIZE; ++k) {
+      if (std::isinf(raysPacket.tfar[k])) {
+        result |= 1u << k;
+      }
+    }
+
     return result;
   }
 
@@ -455,75 +393,98 @@ public:
   }
 };
 
-void RD_FFIntegrator::ComputeFF(const int& quadsCount, std::vector<RD_FFIntegrator::Quad>& bigQuads)
+void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator::Triangle>& triangles)
 {
-  FF.assign(quadsCount, std::vector<float>(quadsCount, 0));
+  FF.resize(quadsCount);
 
   std::stringstream ss;
   ss << "FF" << quadsCount;
   std::ifstream fin(ss.str(), std::ios::binary);
-  if (!recompute_ff && fin.is_open()) {
+  if (!recompute_ff && fin.is_open() && false) {
+    uint32_t countFromFile = 0;
+    fin.read(reinterpret_cast<char*>(&countFromFile), sizeof(countFromFile));
+    assert(countFromFile == quadsCount);
     for (int i = 0; i < quadsCount; ++i) {
-      for (int j = 0; j < quadsCount; ++j) {
-        fin.read(reinterpret_cast<char*>(&FF[i][j]), sizeof(FF[i][j]));
+      uint32_t rowSize;
+      fin.read(reinterpret_cast<char*>(&rowSize), sizeof(rowSize));
+      for (int j = 0; j < rowSize; ++j) {
+        uint32_t idx;
+        fin.read(reinterpret_cast<char*>(&idx), sizeof(idx));
+        fin.read(reinterpret_cast<char*>(&FF[i][idx]), sizeof(FF[i][idx]));
       }
     }
+    fin.close();
     return;
   }
   std::ofstream fout(ss.str(), std::ios::binary);
 
-  std::vector<std::vector<Sample>> samples = gen_samples(instanceQuads);
+  std::vector<std::vector<Sample>> samples = gen_samples(instanceTriangles);
   std::vector<float> squares(quadsCount);
   for (int i = 0; i < quadsCount; ++i) {
-    squares[i] = quad_square(instanceQuads[i]);
+    squares[i] = triangle_square(instanceTriangles[i]);
   }
 
-  EmbreeTracer tracer(bigQuads);
+  EmbreeTracer tracer(triangles);
 
   omp_set_dynamic(0);
 
-  for (int i = 0; i < quadsCount; ++i) {
+  for (int i = 0; i < quadsCount - 1; ++i) {
+    if (100 * i / quadsCount < 100 * (i + 1) / quadsCount) {
+      std::cout << 100 * i / quadsCount << "% finished" << std::endl;
+    }
     const std::vector<Sample>& samples1 = samples[i];
+
 #pragma omp parallel for num_threads(7)
     for (int j = i + 1; j < quadsCount; ++j) {
       const std::vector<Sample>& samples2 = samples[j];
-      std::vector<uint8_t> occluded = tracer.traceRays(samples1, samples2);
+      uint16_t occluded = tracer.traceRays(samples1, samples2);
       float value = 0;
       int samplesCount = 0;
       for (int k = 0; k < samples1.size(); ++k) {
         const Sample& sample1 = samples1[k];
-        for (int h = 0; h < samples2.size(); ++h) {
+        for (int h = 0; h < samples2.size(); ++h, occluded >>= 1) {
           const Sample& sample2 = samples2[h];
-          if (occluded[k * samples2.size() + h]) {
+          if ((occluded & 1) != 0) {
             samplesCount++;
             continue;
           }
           const float3 r = sample1.pos - sample2.pos;
-          const float l = length(r);
-          if (l < 1e-5) {
+          const float lengthSq = dot(r, r);
+          if (lengthSq < 1e-10) {
             continue;
           }
-          const float3 toSample1 = r / l;
-          const float3 toSample2 = -toSample1;
-          const float theta1 = max(dot(sample1.normal, toSample2), 0.f);
-          const float theta2 = max(dot(sample2.normal, toSample1), 0.f);
-          value += theta1 * theta2 / l / l;
+          const float l = std::sqrt(lengthSq);
+          const float invL = 1 / l;
+          const float3 toSample = r * invL;
+          const float theta1 = max(-dot(sample1.normal, toSample), 0.f);
+          const float theta2 = max(dot(sample2.normal, toSample), 0.f);
+          value += theta1 * theta2 * invL * invL;
           samplesCount++;
         }
       }
       if (samplesCount > 0) {
         value /= samplesCount * 3.14f;
       }
-      FF[i][j] = value * squares[j];
-      FF[j][i] = value * squares[i];
+#pragma omp critical
+      if (value > 1e-9) {
+        FF[i][j] = value * squares[j];
+        FF[j][i] = value * squares[i];
+      }
     }
   }
 
+  fout.write(reinterpret_cast<const char*>(&quadsCount), sizeof(quadsCount));
   for (int i = 0; i < quadsCount; ++i) {
-    for (int j = 0; j < quadsCount; ++j) {
-      fout.write(reinterpret_cast<char*>(&FF[i][j]), sizeof(FF[i][j]));
+    uint32_t rowSize = FF[i].size();
+    fout.write(reinterpret_cast<char*>(&rowSize), sizeof(rowSize));
+    for (auto it = FF[i].begin(); it != FF[i].end(); ++it) {
+      uint32_t idx = it->first;
+      float value = it->second;
+      fout.write(reinterpret_cast<char*>(&idx), sizeof(idx));
+      fout.write(reinterpret_cast<char*>(&value), sizeof(value));
     }
   }
+  fout.close();
 }
 
 std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<float3>& emission, const std::vector<float3>& colors) {
@@ -536,7 +497,9 @@ std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<fl
 #pragma omp parallel for num_threads(7)
     for (int i = 0; i < quadsCount; ++i) {
       for (int j = 0; j < quadsCount; ++j) {
-        incident[i] += FF[i][j] * excident[j];
+        if (FF[i].find(j) != FF[i].end()) {
+          incident[i] += FF[i][j] * excident[j];
+        }
       }
     }
 #pragma omp parallel for num_threads(7)
@@ -581,21 +544,29 @@ static int tessFactor;
 static bool noInterpolation;
 
 void RD_FFIntegrator::EndScene() {
-  const int quadsCount = instanceQuads.size();
+  const int trianglesCount = instanceTriangles.size();
 
   std::vector<float3> colors, emission;
-  for (int i = 0; i < quadsCount; ++i) {
-    colors.push_back(matColors[instanceQuads[i].materialId]);
-    emission.push_back(matEmission[instanceQuads[i].materialId]);
+  for (int i = 0; i < trianglesCount; ++i) {
+    colors.push_back(matColors[instanceTriangles[i].materialId]);
+    emission.push_back(matEmission[instanceTriangles[i].materialId]);
   }
 
-  std::vector<RD_FFIntegrator::Quad> bigQuads = merge_quads(instanceQuads, tessFactor);
+  std::stringstream ss;
+  ss << "Colors" << trianglesCount;
+  std::ofstream colorsOut(ss.str(), std::ios::binary | std::ios::out);
+  colorsOut.write(reinterpret_cast<const char*>(&trianglesCount), sizeof(trianglesCount));
+  for (int i = 0; i < trianglesCount; ++i) {
+    colorsOut.write(reinterpret_cast<char*>(&colors[i]), sizeof(colors[i]));
+  }
+  colorsOut.close();
 
-  ComputeFF(quadsCount, bigQuads);
+  std::cout << trianglesCount << " triangles" << std::endl;
+  ComputeFF(trianglesCount, instanceTriangles);
 
   auto lighting = ComputeLightingClassic(emission, colors);
 
-  auto quads = instanceQuads;
+  auto triangles = instanceTriangles;
 
   hrSceneLibraryOpen(L"GI_res/scene.xml", HR_WRITE_DISCARD);
   HRSceneInstRef scene = hrSceneCreate(L"Scene");
@@ -609,109 +580,53 @@ void RD_FFIntegrator::EndScene() {
   }
   hrCameraClose(cam);
 
-  if (!noInterpolation) {
-    for (int i = 0; i < bigQuads.size(); ++i) {
-      const int imageSize = tessFactor * tessFactor;
-      const int rowStride = tessFactor;
-      std::vector<float> imgData((tessFactor + 2) * (tessFactor + 2) * 4, 0);
-      for (int j = 0; j < tessFactor; ++j) {
-        for (int k = 0; k < tessFactor; ++k) {
-          const int pixelIdx = ((j + 1) * (tessFactor + 2) + k + 1) * 4;
-          imgData[pixelIdx] = lighting[i * imageSize + j * rowStride + k].x;
-          imgData[pixelIdx + 1] = lighting[i * imageSize + j * rowStride + k].y;
-          imgData[pixelIdx + 2] = lighting[i * imageSize + j * rowStride + k].z;
-        }
-      }
-      for (int j = 0; j < tessFactor; ++j) {
-        imgData[(j + 1) * 4] = imgData[(j + tessFactor + 2 + 1) * 4];
-        imgData[(j + 1) * 4 + 1] = imgData[(j + tessFactor + 2 + 1) * 4 + 1];
-        imgData[(j + 1) * 4 + 2] = imgData[(j + tessFactor + 2 + 1) * 4 + 2];
-
-        imgData[(j + 1 + (tessFactor + 2) * (tessFactor + 1)) * 4] = imgData[(j + 1 + (tessFactor + 2) * (tessFactor)) * 4];
-        imgData[(j + 1 + (tessFactor + 2) * (tessFactor + 1)) * 4 + 1] = imgData[(j + 1 + (tessFactor + 2) * (tessFactor)) * 4 + 1];
-        imgData[(j + 1 + (tessFactor + 2) * (tessFactor + 1)) * 4 + 2] = imgData[(j + 1 + (tessFactor + 2) * (tessFactor)) * 4 + 2];
-      }
-      for (int j = 0; j < tessFactor + 2; ++j) {
-        imgData[(j * (tessFactor + 2)) * 4] = imgData[(j * (tessFactor + 2) + 1) * 4];
-        imgData[(j * (tessFactor + 2)) * 4 + 1] = imgData[(j * (tessFactor + 2) + 1) * 4 + 1];
-        imgData[(j * (tessFactor + 2)) * 4 + 2] = imgData[(j * (tessFactor + 2) + 1) * 4 + 2];
-
-        imgData[(j * (tessFactor + 2) + tessFactor + 1) * 4] = imgData[(j * (tessFactor + 2) + tessFactor) * 4];
-        imgData[(j * (tessFactor + 2) + tessFactor + 1) * 4 + 1] = imgData[(j * (tessFactor + 2) + tessFactor) * 4 + 1];
-        imgData[(j * (tessFactor + 2) + tessFactor + 1) * 4 + 2] = imgData[(j * (tessFactor + 2) + tessFactor) * 4 + 2];
-      }
-      auto texId = hrTexture2DCreateFromMemory(tessFactor + 2, tessFactor + 2, 16, imgData.data());
-
-      std::wstringstream ss;
-      ss << "Mat" << i;
-      auto matRef = hrMaterialCreate(ss.str().c_str());
-      hrMaterialOpen(matRef, HR_WRITE_DISCARD);
-      auto material = hrMaterialParamNode(matRef);
-      auto diffuse = material.append_child();
-      diffuse.set_name(L"diffuse");
-      diffuse.append_attribute(L"brdf_type").set_value(L"lambert");
-      auto color = diffuse.append_child();
-      color.set_name(L"color");
-      color.append_attribute(L"val").set_value(L"1 1 1");
-      auto texRef = color.append_child();
-      texRef.set_name(L"texture");
-      texRef.append_attribute(L"type").set_value(L"texref");
-      texRef.append_attribute(L"id").set_value(texId.id);
-      hrMaterialClose(matRef);
-
-      ss = std::wstringstream();
-      ss << "Mesh" << i;
-      auto mesh = hrMeshCreate(ss.str().c_str());
-      hrMeshOpen(mesh, HR_TRIANGLE_IND12, HR_WRITE_DISCARD);
-      std::array<int, 6> quadIdx = { 0, 1, 2, 0, 2, 3 };
-      float offset = 0.5f / (tessFactor + 2);
-      std::array<float2, 4> texCoords = { float2(offset, offset), float2(offset, 1 - offset), float2(1 - offset, 1 - offset), float2(1 - offset, offset) };
-      hrMeshMaterialId(mesh, i);
-      hrMeshVertexAttribPointer4f(mesh, L"positions", reinterpret_cast<float*>(bigQuads[i].points.data()));
-      hrMeshVertexAttribPointer4f(mesh, L"normals", reinterpret_cast<float*>(bigQuads[i].normal.value().data()));
-      hrMeshVertexAttribPointer4f(mesh, L"tangent", reinterpret_cast<float*>(bigQuads[i].tangent.value().data()));
-      hrMeshVertexAttribPointer2f(mesh, L"texcoord", reinterpret_cast<float*>(texCoords.data()));
-      hrMeshAppendTriangles3(mesh, 6, quadIdx.data());
-      hrMeshClose(mesh);
-
-      std::array<float, 16> matrix = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-      hrMeshInstance(scene, mesh, matrix.data());
-    }
+  for (int i = 0; i < lighting.size(); ++i) {
+    std::wstringstream ss;
+    ss << "Mat" << i;
+    auto matRef = hrMaterialCreate(ss.str().c_str());
+    hrMaterialOpen(matRef, HR_WRITE_DISCARD);
+    auto material = hrMaterialParamNode(matRef);
+    auto diffuse = material.append_child();
+    diffuse.set_name(L"diffuse");
+    diffuse.append_attribute(L"brdf_type").set_value(L"lambert");
+    auto color = diffuse.append_child();
+    color.set_name(L"color");
+    ss = std::wstringstream();
+    ss << lighting[i].x << " " << lighting[i].y << ' ' << lighting[i].z;
+    color.append_attribute(L"val").set_value(ss.str().c_str());
+    hrMaterialClose(matRef);
   }
-  else {
-    for (int i = 0; i < lighting.size(); ++i) {
-      std::wstringstream ss;
-      ss << "Mat" << i;
-      auto matRef = hrMaterialCreate(ss.str().c_str());
-      hrMaterialOpen(matRef, HR_WRITE_DISCARD);
-      auto material = hrMaterialParamNode(matRef);
-      auto diffuse = material.append_child();
-      diffuse.set_name(L"diffuse");
-      diffuse.append_attribute(L"brdf_type").set_value(L"lambert");
-      auto color = diffuse.append_child();
-      color.set_name(L"color");
-      ss = std::wstringstream();
-      ss << lighting[i].x << " " << lighting[i].y << ' ' << lighting[i].z;
-      color.append_attribute(L"val").set_value(ss.str().c_str());
-      hrMaterialClose(matRef);
+  std::vector<float4> points;
+  std::vector<float4> normals;
+  std::vector<float4> tangents;
+  std::vector<float2> texCoords;
+  std::vector<uint32_t> materials;
+  std::vector<uint32_t> indices;
 
-      ss = std::wstringstream();
-      ss << "Mesh" << i;
-      auto mesh = hrMeshCreate(ss.str().c_str());
-      hrMeshOpen(mesh, HR_TRIANGLE_IND12, HR_WRITE_DISCARD);
-      std::array<int, 6> quadIdx = { 0, 1, 2, 0, 2, 3 };
-      hrMeshMaterialId(mesh, i);
-      hrMeshVertexAttribPointer4f(mesh, L"positions", reinterpret_cast<float*>(quads[i].points.data()));
-      hrMeshVertexAttribPointer4f(mesh, L"normals", reinterpret_cast<float*>(quads[i].normal.value().data()));
-      hrMeshVertexAttribPointer4f(mesh, L"tangent", reinterpret_cast<float*>(quads[i].tangent.value().data()));
-      hrMeshVertexAttribPointer2f(mesh, L"texcoord", reinterpret_cast<float*>(quads[i].texCoords.data()));
-      hrMeshAppendTriangles3(mesh, 6, quadIdx.data());
-      hrMeshClose(mesh);
-
-      std::array<float, 16> matrix = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-      hrMeshInstance(scene, mesh, matrix.data());
+  for (int i = 0; i < lighting.size(); ++i) {
+    materials.push_back(i);
+    for (int j = 0; j < 3; ++j) {
+      indices.push_back(indices.size());
     }
+    points.insert(points.end(), triangles[i].points.begin(), triangles[i].points.end());
+    normals.insert(normals.end(), triangles[i].normal.value().begin(), triangles[i].normal.value().end());
+    tangents.insert(tangents.end(), triangles[i].tangent.value().begin(), triangles[i].tangent.value().end());
+    texCoords.insert(texCoords.end(), triangles[i].texCoords.begin(), triangles[i].texCoords.end());
   }
+  
+  auto mesh = hrMeshCreate(L"Whole scene");
+  hrMeshOpen(mesh, HR_TRIANGLE_IND12, HR_WRITE_DISCARD);
+  hrMeshPrimitiveAttribPointer1i(mesh, L"mind", reinterpret_cast<int*>(materials.data()));
+  hrMeshVertexAttribPointer4f(mesh, L"positions", reinterpret_cast<float*>(points.data()));
+  hrMeshVertexAttribPointer4f(mesh, L"normals", reinterpret_cast<float*>(normals.data()));
+  hrMeshVertexAttribPointer4f(mesh, L"tangent", reinterpret_cast<float*>(tangents.data()));
+  hrMeshVertexAttribPointer2f(mesh, L"texcoord", reinterpret_cast<float*>(texCoords.data()));
+  hrMeshAppendTriangles3(mesh, indices.size(), reinterpret_cast<int*>(indices.data()));
+  hrMeshClose(mesh);
+
+  std::array<float, 16> matrix = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+  hrMeshInstance(scene, mesh, matrix.data());
+
   hrSceneClose(scene);
   hrFlush(scene);// , render, cam);
 }

@@ -148,7 +148,7 @@ int main(int argc, const char** argv)
 
   bool recomputeFF = false;
   bool noInterpolation = false;
-  float voxelSize = 0.25;
+  float voxelSize = 0.5 / 8;
   for (int i = 1; i < argc; ++i) {
     recomputeFF |= strcmp(argv[i], "-recomputeFF") == 0;
     noInterpolation |= strcmp(argv[i], "-noInterpolation") == 0;
@@ -156,7 +156,7 @@ int main(int argc, const char** argv)
       voxelSize = std::stof(argv[i + 1]);
     }
   }
-  
+
   //try
   //{
     //window_main_ff_integrator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
@@ -170,9 +170,11 @@ int main(int argc, const char** argv)
     //window_main_free_look_vulkan(L"../Diser/DiffuseReference/07_Outdoor/scenelib", L"vulkan");
     //window_main_free_look_vulkan(L"../Diser/DiffuseReference/08_BigScene/scenelib", L"vulkan");
     //window_main_free_look_vulkan(L"data/testscenes/test_35", L"vulkan");
-    //window_main_voxel_tessellator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/scenelib", L"voxelTessellator", voxelSize);
-    window_main_voxel_tessellator(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/scenelib", L"voxelTessellator", voxelSize);
-    window_main_free_look_vulkan(L"Tessellated", L"vulkan");
+    //window_main_voxel_tessellator(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/scenelib", L"voxelTessellator", voxelSize);
+    //window_main_voxel_tessellator(L"../Diser/DiffuseReference/05_Sponza/scenelib", L"voxelTessellator", voxelSize);
+    window_main_ff_integrator(L"Tessellated", L"ff_integrator", recomputeFF, noInterpolation);
+    //window_main_free_look_vulkan(L"Tessellated", L"vulkan");
+    window_main_free_look_vulkan(L"GI_res", L"vulkan");
     //window_main_free_look(L"data/testscenes/test_42", L"opengl1");
   //}
   //catch (std::runtime_error& e)

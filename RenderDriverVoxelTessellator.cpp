@@ -2,7 +2,10 @@
 
 // PVS-Studio Static Code Analyzer for C, C++, C#, and Java: http://www.viva64.com
 
+#include <algorithm>
 #include <array>
+#include <chrono>
+#include <set>
 
 #include <LiteMath.h>
 
@@ -108,8 +111,21 @@ static inline void mat4x4_transpose(float M[16], const float N[16])
 }
 
 template<typename T>
+float lengthSq(const T& a) {
+  return dot(a, a);
+}
+
+template<typename T>
 static bool isNear(const T& a, const T& b) {
-  return length(a - b) < 1e-5f;
+  return lengthSq(a - b) < 1e-10f;
+}
+
+static bool isNear(const float4& a, const float4& b) {
+  return std::abs(a.x - b.x) < 1e-5f && std::abs(a.y - b.y) < 1e-5f && std::abs(a.z - b.z) < 1e-5f;
+}
+
+static bool isNear(const float2& a, const float2& b) {
+  return std::abs(a.x - b.x) < 1e-5f && std::abs(a.y - b.y) < 1e-5f;
 }
 
 template<typename T>
@@ -246,6 +262,7 @@ Scene PolygonsToTriangles(const Scene& polygons) {
       triangle[2] = polygons.polygons[i][j + 1];
       triangles.materials.push_back(polygons.materials[i]);
       triangles.polygons.push_back(triangle);
+      triangles.voxelIds.push_back(polygons.voxelIds[i]);
     }
   }
   return triangles;
@@ -268,13 +285,31 @@ std::pair<T, T> ordPair(const T& a, const T& b) {
 }
 
 template<int coord>
-void split_triangles_by_plane(Scene& scene, float value) {
+void split_triangles_by_plane(Scene& scene, float value, uint32_t slice_size) {
   Scene splitted = scene;
   splitted.materials.clear();
   splitted.polygons.clear();
+  splitted.voxelIds.clear();
   std::map<std::pair<uint32_t, uint32_t>, uint32_t> vertexCache;
   for (uint32_t i = 0; i < scene.polygons.size(); ++i) {
+    bool onTheLeft = true;
+    bool onTheRight = true;
     const ScenePolygon& poly = scene.polygons[i];
+    for (uint32_t j = 0; j < poly.size(); ++j) {
+      onTheLeft &= scene.positions[poly[j]][coord] < value;
+      onTheRight &= scene.positions[poly[j]][coord] >= value;
+    }
+    if (onTheLeft || onTheRight) {
+      splitted.materials.push_back(scene.materials[i]);
+      splitted.polygons.push_back(scene.polygons[i]);
+      if (onTheLeft) {
+        splitted.voxelIds.push_back(scene.voxelIds[i]);
+      } else {
+        splitted.voxelIds.push_back(scene.voxelIds[i] + slice_size);
+      }
+      continue;
+    }
+
     ScenePolygon left;
     ScenePolygon right;
     for (uint32_t j = 0; j < poly.size(); ++j) {
@@ -303,17 +338,19 @@ void split_triangles_by_plane(Scene& scene, float value) {
     if (left.size() >= 3) {
       splitted.polygons.push_back(left);
       splitted.materials.push_back(scene.materials[i]);
+      splitted.voxelIds.push_back(scene.voxelIds[i]);
     }
     if (right.size() >= 3) {
       splitted.polygons.push_back(right);
       splitted.materials.push_back(scene.materials[i]);
+      splitted.voxelIds.push_back(scene.voxelIds[i] + slice_size);
     }
   }
   scene = splitted;
 }
 
 template <int coord>
-static void split_triangles_along_axis(Scene& scene) {
+static void split_triangles_along_axis(Scene& scene, uint32_t &last_slice_size) {
   float bmax = -1e9;
   float bmin = 1e9;
   for (const float4& pos : scene.positions) {
@@ -321,38 +358,143 @@ static void split_triangles_along_axis(Scene& scene) {
     bmin = std::min(bmin, pos[coord]);
   }
   for (float edge = bmin + voxelSize; edge < bmax; edge += voxelSize) {
-    split_triangles_by_plane<coord>(scene, edge);
+    split_triangles_by_plane<coord>(scene, edge, last_slice_size);
   }
+  last_slice_size *= ceil((bmax - bmin) / voxelSize);
+}
+
+float3 max(const float3& a, const float4& b) {
+  return float3(std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z));
+}
+
+float3 min(const float3& a, const float4& b) {
+  return float3(std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z));
 }
 
 void Scene::compress() {
-  for (int i = positions.size() - 1; i > 0; --i) {
-    for (int j = i - 1; j >= 0; --j) {
-      if (isNear(positions[i], positions[j]) && isNear(normals[i], normals[j]) && isNear(tangents[i], tangents[j]) && isNear(texCoords[i], texCoords[j])) {
-        positions.erase(positions.begin() + i);
-        normals.erase(normals.begin() + i);
-        tangents.erase(tangents.begin() + i);
-        texCoords.erase(texCoords.begin() + i);
-        for (auto& p : polygons) {
-          for (auto& idx : p) {
-            if (idx == i) {
-              idx = j;
-            } else if (idx > i) {
-              idx--;
-            }
-          }
+  std::vector<uint32_t> removedIndices;
+  std::vector<uint32_t> replacers;
+  std::vector<std::pair<uint32_t, uint32_t>> removeAndReplaceIdx;
+  std::vector<std::vector<uint32_t>> bins;
+  const uint32_t sideSize = 100;
+
+  float3 bmax = float3(-1e9f, -1e9f, -1e9f);
+  float3 bmin = float3(1e9f, 1e9f, 1e9f);
+  for (const float4& pos : positions) {
+    bmax = max(bmax, pos);
+    bmin = min(bmin, pos);
+  }
+  bmax += 1e-5;
+  bmin -= 1e-5;
+  float3 gridScale = 1.f / (bmax - bmin) * sideSize;
+  bins.resize(sideSize * sideSize * sideSize);
+  for (uint32_t i = 0; i < positions.size(); ++i) {
+    float3 voxelId = (make_float3(positions[i]) - bmin) * gridScale;
+    uint32_t idx = (uint32_t(voxelId.x) * sideSize + uint32_t(voxelId.y)) * sideSize + uint32_t(voxelId.z);
+    bins[idx].push_back(i);
+  }
+
+  //TODO: We can blur bins to increase accuracy
+
+  for (uint32_t i = 0; i < bins.size(); ++i) {
+    for (int iter1 = bins[i].size() - 1; iter1 > 0; --iter1) {
+      const uint32_t idx1 = bins[i][iter1];
+      for (int iter2 = iter1 - 1; iter2 >= 0; --iter2) {
+        const uint32_t idx2 = bins[i][iter2];
+        if (isNear(positions[idx1], positions[idx2]) && isNear(normals[idx1], normals[idx2]) && isNear(tangents[idx1], tangents[idx2]) && isNear(texCoords[idx1], texCoords[idx2])) {
+          removeAndReplaceIdx.emplace_back(idx1, idx2);
+          //removedIndices.push_back(idx1);
+          //replacers.push_back(idx2);
+          break;
         }
-        break;
       }
+    }
+  }
+
+  std::sort(removeAndReplaceIdx.rbegin(), removeAndReplaceIdx.rend());
+  std::vector<float4> compressedPositions;
+  std::vector<float4> compressedNormals;
+  std::vector<float4> compressedTangents;
+  std::vector<float2> compressedTexCoords;
+  //for (uint32_t i = 0; i < removeAndReplaceIdx.size(); ++i) {
+  //  positions.erase(positions.begin() + removeAndReplaceIdx[i].first);
+  //  normals.erase(normals.begin() + removeAndReplaceIdx[i].first);
+  //  tangents.erase(tangents.begin() + removeAndReplaceIdx[i].first);
+  //  texCoords.erase(texCoords.begin() + removeAndReplaceIdx[i].first);
+  //}
+  int idxToRemove = removeAndReplaceIdx.size() - 1;
+  uint32_t uncompressedIdx = 0;
+  std::vector<uint32_t> newIndex;
+  newIndex.reserve(positions.size());
+  while (idxToRemove >= 0) {
+    while (idxToRemove >= 0 && uncompressedIdx < std::min(removeAndReplaceIdx[idxToRemove].first, (uint32_t)positions.size())) {
+      newIndex.push_back(compressedPositions.size());
+      compressedPositions.push_back(positions[uncompressedIdx]);
+      compressedNormals.push_back(normals[uncompressedIdx]);
+      compressedTangents.push_back(tangents[uncompressedIdx]);
+      compressedTexCoords.push_back(texCoords[uncompressedIdx]);
+      uncompressedIdx++;
+    }
+    newIndex.push_back(newIndex[removeAndReplaceIdx[idxToRemove].second]);
+    idxToRemove--;
+    uncompressedIdx++;
+  }
+  while (uncompressedIdx < positions.size()) {
+    newIndex.push_back(compressedPositions.size());
+    compressedPositions.push_back(positions[uncompressedIdx]);
+    compressedNormals.push_back(normals[uncompressedIdx]);
+    compressedTangents.push_back(tangents[uncompressedIdx]);
+    compressedTexCoords.push_back(texCoords[uncompressedIdx]);
+    uncompressedIdx++;
+  }
+
+  positions = compressedPositions;
+  normals = compressedNormals;
+  tangents = compressedTangents;
+  texCoords = compressedTexCoords;
+
+  //for (int i = positions.size() - 1; i > 0; --i) {
+  //  for (int j = i - 1; j >= 0; --j) {
+  //    if (isNear(positions[i], positions[j]) && isNear(normals[i], normals[j]) && isNear(tangents[i], tangents[j]) && isNear(texCoords[i], texCoords[j])) {
+  //      //positions.erase(positions.begin() + i);
+  //      //normals.erase(normals.begin() + i);
+  //      //tangents.erase(tangents.begin() + i);
+  //      //texCoords.erase(texCoords.begin() + i);
+  //      removedIndices.push_back(i);
+  //      replacers.push_back(j);
+  //      break;
+  //    }
+  //  }
+  //}
+
+  for (auto& p : polygons) {
+    for (auto& idx : p) {
+      idx = newIndex[idx];
+      //for (int i = 0; i < removeAndReplaceIdx.size(); ++i) {
+      //  if (idx == removeAndReplaceIdx[i].first) {
+      //    idx = removeAndReplaceIdx[i].second;
+      //  }
+      //  else if (idx > removeAndReplaceIdx[i].first) {
+      //    idx--;
+      //  }
+      //}
     }
   }
 }
 
+uint64_t pack_edge(uint32_t idx1, uint32_t idx2) {
+  return ((uint64_t)min(idx1, idx2) << 32) | max(idx1, idx2);
+}
+
 static void GatherPolygons(Scene& scene) {
+  std::vector<uint32_t> materials;
+  std::vector<float3> normals;
+  std::vector<uint32_t> polygons;
+
   for (int i = scene.polygons.size() - 1; i > 0; --i) {
     bool merged = false;
     for (int j = i - 1; !merged && j >= 0; --j) {
-      if (scene.materials[i] != scene.materials[j]) {
+      if (scene.materials[i] != scene.materials[j] || !isNear(scene.normals[scene.polygons[i][0]], scene.normals[scene.polygons[j][0]])) {
         continue;
       }
       for (uint32_t k = 0; !merged && k < scene.polygons[i].size(); ++k) {
@@ -378,17 +520,86 @@ static void GatherPolygons(Scene& scene) {
       }
     }
   }
+  //std::unordered_map<uint64_t, uint32_t> soupOfEdges;
+  //std::vector<std::unordered_set<uint64_t>> polygons;
+  //for (uint32_t i = 0; i < scene.polygons.size(); ++i) {
+  //  std::cout << i << std::endl;
+  //  std::vector<uint32_t> polygonsToMerge;
+  //  std::unordered_set<uint64_t> edges;
+  //  for (uint32_t j = 0; j < scene.polygons[i].size(); ++j) {
+  //    edges.insert(pack_edge(scene.polygons[i][j], scene.polygons[i][(j + 1) % scene.polygons[i].size()]));
+  //  }
+  //  for (auto edge : edges) {
+  //    for (uint32_t j = 0; j < polygons.size(); ++j) {
+  //      if (polygons[j].count(edge)) {
+  //        polygonsToMerge.push_back(j);
+  //        break;
+  //      }
+  //    }
+  //  }
+  //  polygonsToMerge.push_back(polygons.size());
+  //  polygons.push_back(edges);
+  //  for (uint32_t i = polygonsToMerge.size() - 1; i > 0; i--) {
+  //    for (auto edge : polygons[polygonsToMerge[i]]) {
+  //      if (polygons[polygonsToMerge[0]].count(edge)) {
+  //        polygons[polygonsToMerge[0]].erase(edge);
+  //      } else {
+  //        polygons[polygonsToMerge[0]].insert(edge);
+  //      }
+  //    }
+  //    polygons.erase(polygons.begin() + polygonsToMerge[i]);
+  //  }
+  //}
+  //std::cout << polygons.size() << std::endl;
 }
 
 void RD_VoxelTessellator::EndScene() {
   //TODO: optimize generate triangles
 
+  auto t1 = std::chrono::system_clock::now();
+
+  std::cout << fullScene.materials.size() << " polygons on scene" << std::endl;
   fullScene.compress();
-  GatherPolygons(fullScene);
-  split_triangles_along_axis<0>(fullScene);
-  split_triangles_along_axis<1>(fullScene);
-  split_triangles_along_axis<2>(fullScene);
+  auto t2 = std::chrono::system_clock::now();
+  std::chrono::duration<double> elapsed_seconds = t2 - t1;
+  std::cout << "Scene compressed " << elapsed_seconds.count() << std::endl;
+  t1 = t2;
+  //GatherPolygons(fullScene);
+  t2 = std::chrono::system_clock::now();
+  elapsed_seconds = t2 - t1;
+  std::cout << "Polygons gathered " << elapsed_seconds.count() << std::endl;
+  t1 = t2;
+  fullScene.voxelIds.resize(fullScene.materials.size());
+  for (uint32_t i = 0; i < fullScene.materials.size(); ++i) {
+    fullScene.voxelIds[i] = 0;
+  }
+  t2 = std::chrono::system_clock::now();
+  elapsed_seconds = t2 - t1;
+  std::cout << "Init voxel indices " << elapsed_seconds.count() << std::endl;
+  t1 = t2;
+  uint32_t gridSize = 1;
+  split_triangles_along_axis<0>(fullScene, gridSize);
+  t2 = std::chrono::system_clock::now();
+  elapsed_seconds = t2 - t1;
+  std::cout << "Split 1 finished " << elapsed_seconds.count() << std::endl;
+  std::cout << fullScene.materials.size() << " polygons on scene\n";
+  t1 = t2;
+  split_triangles_along_axis<1>(fullScene, gridSize);
+  t2 = std::chrono::system_clock::now();
+  elapsed_seconds = t2 - t1;
+  std::cout << "Split 2 finished " << elapsed_seconds.count() << std::endl;
+  std::cout << fullScene.materials.size() << " polygons on scene\n";
+  t1 = t2;
+  split_triangles_along_axis<2>(fullScene, gridSize);
+  t2 = std::chrono::system_clock::now();
+  elapsed_seconds = t2 - t1;
+  std::cout << "Split 3 finished " << elapsed_seconds.count() << std::endl;
+  std::cout << fullScene.materials.size() << " polygons on scene\n";
+  t1 = t2;
   fullScene.compress();
+  t2 = std::chrono::system_clock::now();
+  elapsed_seconds = t2 - t1;
+  std::cout << "Final scene compressed " << elapsed_seconds.count() << std::endl;
 
   struct Material
   {
@@ -410,6 +621,14 @@ void RD_VoxelTessellator::EndScene() {
   }
   Scene triangles = PolygonsToTriangles(fullScene);
 
+  allRemapLists = std::vector<int>();
+  tableOffsetsAndSize = std::vector<int2>();
+  meshes = std::map<int, Scene>();
+  fullScene = Scene();
+  matColors = std::map<int, float3>();
+  matEmission = std::map<int, float3>();
+
+  hrSceneLibraryClose();
   hrSceneLibraryOpen(L"Tessellated", HR_WRITE_DISCARD);
   HRSceneInstRef scene = hrSceneCreate(L"Scene");
   hrSceneOpen(scene, HR_WRITE_DISCARD);
@@ -459,6 +678,7 @@ void RD_VoxelTessellator::EndScene() {
     indices.push_back(p[2]);
   }
   hrMeshPrimitiveAttribPointer1i(mesh, L"mind", reinterpret_cast<int*>(triangles.materials.data()));
+  hrMeshPrimitiveAttribPointer1i(mesh, L"voxel_ids", reinterpret_cast<int*>(triangles.voxelIds.data()));
   hrMeshVertexAttribPointer4f(mesh, L"positions", reinterpret_cast<float*>(triangles.positions.data()));
   hrMeshVertexAttribPointer4f(mesh, L"normals", reinterpret_cast<float*>(triangles.normals.data()));
   hrMeshVertexAttribPointer4f(mesh, L"tangent", reinterpret_cast<float*>(triangles.tangents.data()));
@@ -537,4 +757,5 @@ void window_main_voxel_tessellator(const wchar_t* a_libPath, const wchar_t* a_re
   hrRenderEnableDevice(renderRef, 0, true);
 
   hrCommit(scnRef, renderRef);
+  hrSceneLibraryClose();
 }

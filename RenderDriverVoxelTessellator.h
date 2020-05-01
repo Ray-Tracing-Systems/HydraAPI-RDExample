@@ -16,6 +16,7 @@ struct Scene
   std::vector<HydraLiteMath::float4> tangents;
 
   std::vector<uint32_t> materials;
+  std::vector<uint32_t> voxelIds;
   std::vector<ScenePolygon> polygons;
 
   void addScene(const Scene& scene);
