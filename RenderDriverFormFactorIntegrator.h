@@ -32,7 +32,7 @@ struct RD_FFIntegrator : public IHRRenderDriver {
   bool UpdateSettings(pugi::xml_node a_settingsNode) override { return false; }
   void BeginScene(pugi::xml_node a_sceneNode) override;
   void ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator::Triangle>& triangles);
-  std::vector<HydraLiteMath::float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<HydraLiteMath::float3>& emission, const std::vector<HydraLiteMath::float3>& colors);
+  std::vector<HydraLiteMath::float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<HydraLiteMath::float3>& emission, const std::vector<HydraLiteMath::float3>& colors, const std::vector<std::vector<uint32_t>>& clusters);
   std::vector<HydraLiteMath::float3> RD_FFIntegrator::ComputeLightingRandom(const std::vector<HydraLiteMath::float3>& emission, const std::vector<HydraLiteMath::float3>& colors);
   void EndScene() override;
   void InstanceMeshes(int32_t a_mesh_id, const float* a_matrix, int32_t a_instNum, const int* a_lightInstId, const int* a_remapId, const int* a_realInstId) override;
@@ -50,7 +50,7 @@ struct RD_FFIntegrator : public IHRRenderDriver {
 
   std::map<int, std::vector<Triangle>> meshTriangles;
   std::vector<Triangle> instanceTriangles;
-  std::vector<std::unordered_map<int, float>> FF;
+  std::vector<std::vector<std::pair<int, float>>> FF;
 
   std::vector<Quad> bigQuads;
   std::map<int, HydraLiteMath::float3> matColors;

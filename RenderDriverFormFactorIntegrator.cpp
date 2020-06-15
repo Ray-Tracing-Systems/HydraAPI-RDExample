@@ -5,12 +5,15 @@
 #include <array>
 #include <chrono>
 
+#include <cstdio>
 #include <cassert>
 
 #include <embree3/rtcore.h>
 #include <omp.h>
 
 #include <LiteMath.h>
+
+#include "SparseMatrix.h"
 
 #include "RenderDriverFormFactorIntegrator.h"
 
@@ -265,7 +268,29 @@ static float triangle_square(const RD_FFIntegrator::Triangle& triangle) {
   return length(cross(p1 - p0, p2 - p0)) * 0.5;
 }
 
+class Timer {
+  std::chrono::time_point<std::chrono::steady_clock> start;
+  std::string name;
+  int index = -1;
+public:
+  Timer(const std::string& s) {
+    start = std::chrono::high_resolution_clock::now();
+    name = s;
+  }
+  Timer(const std::string& s, int idx) {
+    start = std::chrono::high_resolution_clock::now();
+    name = s;
+    index = idx;
+  }
 
+  ~Timer() {
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start);
+    if (index != -1)
+      std::cout << duration.count() / 1000.f << " ms for " << name << ' ' << index << std::endl;
+    else
+      std::cout << duration.count() / 1000.f << " ms for " << name << std::endl;
+  }
+};
 
 static std::vector<RD_FFIntegrator::Quad> merge_quads(const std::vector<RD_FFIntegrator::Quad>& quads, int &tessFactor) {
   std::vector<RD_FFIntegrator::Quad> result;
@@ -330,7 +355,7 @@ public:
       }
     }
 
-    Device = rtcNewDevice(""); CHECK_EMBREE
+    Device = rtcNewDevice("threads=0,frequency_level=simd512"); CHECK_EMBREE
     Scene = rtcNewScene(Device); CHECK_EMBREE
     RTCGeometry geometry = rtcNewGeometry(Device, RTC_GEOMETRY_TYPE_TRIANGLE); CHECK_EMBREE
     RTCBuffer indicesBuffer = rtcNewSharedBuffer(Device, reinterpret_cast<void*>(indices.data()), indices.size() * sizeof(indices[0])); CHECK_EMBREE
@@ -342,7 +367,6 @@ public:
     rtcAttachGeometry(Scene, geometry); CHECK_EMBREE
     rtcReleaseGeometry(geometry); CHECK_EMBREE
     rtcCommitScene(Scene); CHECK_EMBREE
-    rtcSetSceneFlags(Scene, RTC_SCENE_FLAG_ROBUST); CHECK_EMBREE
     rtcInitIntersectContext(&IntersectionContext); CHECK_EMBREE
     IntersectionContext.flags = RTC_INTERSECT_CONTEXT_FLAG_COHERENT;
     IntersectionContext.instID[0] = 0;
@@ -355,9 +379,9 @@ public:
     uint16_t result = 0;
     const int PACKET_SIZE = 4;
     RTCRay16 raysPacket;
-    for (int i = 0, target_id = 0; i < samples1.size(); ++i) {
+    for (int i = 0, target_id = 0; i < PACKET_SIZE; ++i) {
       const Sample& s1 = samples1[i];
-      for (int j = 0; j < samples2.size(); ++j, ++target_id) {
+      for (int j = 0; j < PACKET_SIZE; ++j, ++target_id) {
         const Sample& s2 = samples2[j];
         const float BIAS = 1e-5f;
         float3 dir = s2.pos - s1.pos;
@@ -369,14 +393,15 @@ public:
         raysPacket.dir_y[target_id] = dir.y;
         raysPacket.dir_z[target_id] = dir.z;
         raysPacket.tfar[target_id] = 1.f - BIAS;
-        raysPacket.id[target_id] = 0;
-        raysPacket.mask[target_id] = 0;
-        raysPacket.time[target_id] = 0;
       }
     }
 
+    memset(raysPacket.id, 0, sizeof(raysPacket.id));
+    memset(raysPacket.mask, 0, sizeof(raysPacket.mask));
+    memset(raysPacket.time, 0, sizeof(raysPacket.time));
+
     const int validMask = ~0u;
-    rtcOccluded16(&validMask, Scene, &IntersectionContext, &raysPacket); CHECK_EMBREE
+    rtcOccluded16(&validMask, Scene, &IntersectionContext, &raysPacket); //CHECK_EMBREE
 
     for (uint32_t k = 0; k < PACKET_SIZE * PACKET_SIZE; ++k) {
       if (std::isinf(raysPacket.tfar[k])) {
@@ -393,6 +418,7 @@ public:
   }
 };
 
+
 void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator::Triangle>& triangles)
 {
   FF.resize(quadsCount);
@@ -400,7 +426,7 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
   std::stringstream ss;
   ss << "FF" << quadsCount;
   std::ifstream fin(ss.str(), std::ios::binary);
-  if (!recompute_ff && fin.is_open() && false) {
+  if (!recompute_ff && fin.is_open()) {
     uint32_t countFromFile = 0;
     fin.read(reinterpret_cast<char*>(&countFromFile), sizeof(countFromFile));
     assert(countFromFile == quadsCount);
@@ -409,8 +435,10 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
       fin.read(reinterpret_cast<char*>(&rowSize), sizeof(rowSize));
       for (int j = 0; j < rowSize; ++j) {
         uint32_t idx;
+        float value;
         fin.read(reinterpret_cast<char*>(&idx), sizeof(idx));
-        fin.read(reinterpret_cast<char*>(&FF[i][idx]), sizeof(FF[i][idx]));
+        fin.read(reinterpret_cast<char*>(&value), sizeof(value));
+        FF[i].emplace_back(idx, value);
       }
     }
     fin.close();
@@ -428,16 +456,35 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
 
   omp_set_dynamic(0);
 
+  std::vector<uint32_t> patchesToProcess(quadsCount);
+  std::vector<Sample> patchesToCompute(quadsCount);
+  std::vector<uint16_t> occlRes(quadsCount);
+
   for (int i = 0; i < quadsCount - 1; ++i) {
+    //Timer timer("row", i);
     if (100 * i / quadsCount < 100 * (i + 1) / quadsCount) {
       std::cout << 100 * i / quadsCount << "% finished" << std::endl;
     }
     const std::vector<Sample>& samples1 = samples[i];
 
-#pragma omp parallel for num_threads(7)
+    patchesToProcess.clear();
     for (int j = i + 1; j < quadsCount; ++j) {
       const std::vector<Sample>& samples2 = samples[j];
+      const float3 posToPos = samples1[0].pos - samples2[0].pos;
+      if (!(dot(samples1[0].normal, posToPos) >= 0 || dot(samples2[0].normal, posToPos) <= 0)) {
+        patchesToProcess.push_back(j);
+      }
+    }
+
+#pragma omp parallel for num_threads(8)
+    for (int idx = 0; idx < patchesToProcess.size(); ++idx) {
+      int j = patchesToProcess[idx];
+      const std::vector<Sample>& samples2 = samples[j];
+
       uint16_t occluded = tracer.traceRays(samples1, samples2);
+      if (occluded == 0xFFFF) {
+        continue;
+      }
       float value = 0;
       int samplesCount = 0;
       for (int k = 0; k < samples1.size(); ++k) {
@@ -467,8 +514,8 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
       }
 #pragma omp critical
       if (value > 1e-9) {
-        FF[i][j] = value * squares[j];
-        FF[j][i] = value * squares[i];
+        FF[i].emplace_back(j, value * squares[j]);
+        FF[j].emplace_back(i, value * squares[i]);
       }
     }
   }
@@ -487,20 +534,19 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
   fout.close();
 }
 
-std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<float3>& emission, const std::vector<float3>& colors) {
+std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<float3>& emission, const std::vector<float3>& colors, const std::vector<std::vector<uint32_t>>& clusters) {
   const int quadsCount = colors.size();
   std::vector<float3> incident;
   std::vector<float3> lighting(emission);
   std::vector<float3> excident(emission);
-  for (int iter = 0; iter < 7; ++iter) {
+  for (int iter = 0; iter < 5; ++iter) {
     incident.assign(quadsCount, float3());
 #pragma omp parallel for num_threads(7)
     for (int i = 0; i < quadsCount; ++i) {
-      for (int j = 0; j < quadsCount; ++j) {
-        if (FF[i].find(j) != FF[i].end()) {
-          incident[i] += FF[i][j] * excident[j];
-        }
-      }
+      for (uint32_t j = 0; j < FF[i].size(); ++j)
+      //for (int j = 0; j < quadsCount; ++j) {
+        incident[i] += FF[i][j].second * excident[FF[i][j].first];
+      //}
     }
 #pragma omp parallel for num_threads(7)
     for (int i = 0; i < quadsCount; ++i) {
@@ -508,46 +554,209 @@ std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<fl
       lighting[i] += excident[i];
     }
   }
+  std::vector<float3> unrolledLight;
+  for (uint32_t i = 0; i < clusters.size(); ++i) {
+    for (uint32_t j = 0; j < clusters[i].size(); ++j) {
+      if (unrolledLight.size() <= clusters[i][j]) {
+        unrolledLight.resize(clusters[i][j] + 1);
+      }
+      unrolledLight[clusters[i][j]] = lighting[i];
+    }
+  }
+  return unrolledLight;
+}
+
+std::vector<float3> RD_FFIntegrator::ComputeLightingRandom(const std::vector<float3>& emission, const std::vector<float3>& colors) {
+  const int quadsCount = colors.size();
+  std::vector<std::vector<float>> probabilityTable(quadsCount);
+  std::vector<std::vector<std::pair<int, int>>> probabilityChoise(quadsCount);
+#pragma omp parallel for num_threads(7)
+  for (int i = 0; i < FF.size(); ++i) {
+    std::vector<std::pair<int, float>> row;
+    float sum = 0;
+    for (int j = 0; j < FF[i].size(); ++j) {
+      row.emplace_back(FF[i][j]);
+      sum += FF[i][j].second;
+    }
+    if (sum > 1) {
+      for (uint32_t j = 0; j < row.size(); ++j) {
+        row[j].second /= sum;
+      }
+      sum = 1;
+    }
+    if (sum < 1) {
+      row.emplace_back(-1, 1.f - sum);
+    }
+    for (uint32_t j = 0; j < row.size(); ++j) {
+      row[j].second *= row.size();
+    }
+    for (uint32_t j = 1, je = row.size(); j < je; ++j) {
+      uint32_t lessIdx = 0, moreIdx = 0;
+      for (; lessIdx < row.size() && row[lessIdx].second > 1; ++lessIdx);
+      for (; moreIdx < row.size() && row[moreIdx].second <= 1; ++moreIdx);
+      if (lessIdx == row.size())
+        lessIdx = row.size() - 1;
+      if (moreIdx == row.size())
+        moreIdx = (lessIdx + 1) % row.size();
+      probabilityTable[i].push_back(row[lessIdx].second);
+      probabilityChoise[i].emplace_back(row[lessIdx].first, row[moreIdx].first);
+      row[moreIdx].second = row[moreIdx].second + row[lessIdx].second - 1;
+      std::swap(row[lessIdx], row.back());
+      row.resize(row.size() - 1);
+    }
+    probabilityTable[i].push_back(1);
+    probabilityChoise[i].emplace_back(row[0].first, -1);
+  }
+
+  std::vector<float3> bounce1(emission);
+  std::vector<float3> bounce2(quadsCount, float3(0, 0, 0));
+  std::vector<float3> lighting(emission);
+  uint32_t iters = 300;
+  uint32_t bounces = 60;
+  const float invMaxRand = 1.f / RAND_MAX;
+  for (uint32_t bounce = 0; bounce < bounces; ++bounce) {
+    for (uint32_t it = 0; it < iters; ++it) {
+      #pragma omp parallel for num_threads(7)
+      for (int i = 0; i < FF.size(); ++i) {
+        const uint32_t sampleCell = rand() % probabilityTable[i].size();
+        const float sampleLevel = rand() * invMaxRand;
+        const int sampleId = sampleLevel <= probabilityTable[i][sampleCell] ? probabilityChoise[i][sampleCell].first : probabilityChoise[i][sampleCell].second;
+        if (sampleId < 0) {
+          continue;
+        }
+        bounce2[i] += bounce1[sampleId];
+      }
+    }
+
+    bounce1 = emission;
+#pragma omp parallel for num_threads(7)
+    for (int i = 0; i < FF.size(); ++i) {
+      lighting[i] = lerp(bounce2[i] * colors[i] / iters, lighting[i], 0.96065750035);
+      bounce1[i] += lighting[i];
+      bounce2[i] = float3(0, 0, 0);
+    }
+  }
+
+#pragma omp parallel for num_threads(7)
+  for (int i = 0; i < FF.size(); ++i) {
+    lighting[i] += emission[i];
+  }
   return lighting;
 }
 
-//std::vector<float3> RD_FFIntegrator::ComputeLightingRandom(const std::vector<float3>& emission, const std::vector<float3>& colors) {
-//  const int quadsCount = colors.size();
-//  std::vector<std::vector<float>> probabilityTable(quadsCount);
-//  std::vector<std::vector<std::pair<int, int>>> probabilityChoise(quadsCount);
-//  for (int i = 0; i < FF.size(); ++i) {
-//    std::vector<std::pair<float, int>> row;
-//    float sum = 0;
-//    for (int j = 0; j < FF[i].size(); ++j) {
-//      if (FF[i][j] < 1e-9) {
-//        continue;
-//      }
-//      row.emplace_back(j, FF[i][j]);
-//      sum += FF[i][j];
-//    }
-//    if (sum < 1) {
-//      row.emplace_back(-1, 1.f - sum);
-//    }
-//    sum = 1.f;
-//    const float columnSum = sum / row.size();
-//    while (!row.empty()) {
-//      auto [minVal, maxVal] = std::minmax_element(row.begin(), row.end());
-//      probabilityChoise[i].emplace_back(minVal->second, maxVal->second);
-//      probabilityTable[i].push_back(minVal->first / columnSum);
-//      maxVal->first -= columnSum - minVal->first;
-//      row.erase(minVal);
-//    }
-//  }
-//}
+void reorder_triangles_by_voxels(
+  std::vector<uint32_t>& voxel_ids,
+  std::vector<float3>& colors,
+  std::vector<float3>& emission,
+  std::vector<RD_FFIntegrator::Triangle>& triangles
+) {
+  std::vector<uint32_t> remapIndices(voxel_ids.size());
+  std::vector<uint32_t> reorderedIndices(voxel_ids.size());
+  for (uint32_t i = 0; i < voxel_ids.size(); ++i) {
+    reorderedIndices[i] = i;
+  }
+  std::sort(reorderedIndices.begin(), reorderedIndices.end(), [&voxel_ids](uint32_t a, uint32_t b) {return voxel_ids[a] < voxel_ids[b]; });
+  for (uint32_t i = 0; i < remapIndices.size(); ++i) {
+    remapIndices[reorderedIndices[i]] = i;
+  }
+  
+  uint32_t sortedPrefix = 0;
+  while (sortedPrefix != remapIndices.size()) {
+    if (remapIndices[sortedPrefix] == sortedPrefix) {
+      sortedPrefix++;
+      continue;
+    }
+    uint32_t targetIdx = sortedPrefix + 1;
+    while (remapIndices[targetIdx] != sortedPrefix) {
+      targetIdx++;
+    }
+    std::swap(remapIndices[sortedPrefix], remapIndices[targetIdx]);
+    std::swap(voxel_ids[sortedPrefix], voxel_ids[targetIdx]);
+    std::swap(colors[sortedPrefix], colors[targetIdx]);
+    std::swap(emission[sortedPrefix], emission[targetIdx]);
+    std::swap(triangles[sortedPrefix], triangles[targetIdx]);
+  }
+}
+
+/*
+Matrix scheme:
+| A B |
+| C D |
+*/
+
+
+std::vector<std::vector<uint32_t>> merge_triangles(
+  std::vector<uint32_t>& voxels,
+  std::vector<float3>& colors,
+  std::vector<float3>& emission,
+  std::vector<float>& squares,
+  std::vector<std::vector<std::pair<int, float>>>& ff
+) {
+  std::vector<std::vector<uint32_t>> clusters;
+  std::vector<bool> used(voxels.size(), false);
+  for (uint32_t i = 0; i < voxels.size(); ++i) {
+    if (used[i]) {
+      continue;
+    }
+    clusters.resize(clusters.size() + 1);
+    for (uint32_t j = i; j < voxels.size(); ++j) {
+      if (voxels[i] == voxels[j]) {
+        clusters.back().push_back(j);
+        used[j] = true;
+      }
+    }
+  }
+  std::vector<std::vector<float>> compress1(clusters.size());
+  std::vector<float3> comEmission(clusters.size()), compColors(clusters.size());
+  for (uint32_t i = 0; i < clusters.size(); ++i) {
+    compress1[i].assign(clusters.size(), 0);
+    std::vector<float> newRow(colors.size(), 0);
+    float weight = 0;
+    for (uint32_t j = 0; j < clusters[i].size(); ++j) {
+      comEmission[i] += emission[clusters[i][j]] * squares[clusters[i][j]];
+      compColors[i] += colors[clusters[i][j]] * squares[clusters[i][j]];
+      const std::vector<std::pair<int, float>>& row = ff[clusters[i][j]];
+      for (const auto& value : row) {
+        newRow[value.first] += value.second * squares[clusters[i][j]];
+      }
+      weight += squares[clusters[i][j]];
+    }
+    for (uint32_t j = 0; j < clusters.size(); ++j) {
+      float w2 = 0;
+      for (uint32_t h = 0; h < clusters[j].size(); ++h) {
+        compress1[i][j] += newRow[clusters[j][h]] * squares[clusters[j][h]];
+        w2 += squares[clusters[j][h]];
+      }
+      compress1[i][j] /= weight * w2;
+    }
+    comEmission[i] /= weight;
+    compColors[i] /= weight;
+  }
+
+  emission = comEmission;
+  colors = compColors;
+
+  ff.clear();
+  ff.resize(compress1.size());
+  for (uint32_t i = 0; i < compress1.size(); ++i) {
+    for (uint32_t j = 0; j < compress1[i].size(); ++j) {
+      if (compress1[i][j] > 1e-9) {
+        ff[i].emplace_back(j, compress1[i][j]);
+      }
+    }
+  }
+
+  return clusters;
+}
 
 static int tessFactor;
 static bool noInterpolation;
 
 void RD_FFIntegrator::EndScene() {
-  const int trianglesCount = instanceTriangles.size();
+  const uint32_t trianglesCount = static_cast<uint32_t>(instanceTriangles.size());
 
   std::vector<float3> colors, emission;
-  for (int i = 0; i < trianglesCount; ++i) {
+  for (uint32_t i = 0; i < trianglesCount; ++i) {
     colors.push_back(matColors[instanceTriangles[i].materialId]);
     emission.push_back(matEmission[instanceTriangles[i].materialId]);
   }
@@ -556,19 +765,74 @@ void RD_FFIntegrator::EndScene() {
   ss << "Colors" << trianglesCount;
   std::ofstream colorsOut(ss.str(), std::ios::binary | std::ios::out);
   colorsOut.write(reinterpret_cast<const char*>(&trianglesCount), sizeof(trianglesCount));
-  for (int i = 0; i < trianglesCount; ++i) {
+  for (uint32_t i = 0; i < trianglesCount; ++i) {
     colorsOut.write(reinterpret_cast<char*>(&colors[i]), sizeof(colors[i]));
   }
   colorsOut.close();
 
+  std::vector<uint32_t> voxels(trianglesCount);
+  ss = std::stringstream();
+  ss << "VoxelIds" << trianglesCount;
+  std::ifstream voxelsOut(ss.str(), std::ios::binary | std::ios::in);
+  uint32_t voxTriCount;
+  voxelsOut.read(reinterpret_cast<char*>(&voxTriCount), sizeof(voxTriCount));
+  for (uint32_t i = 0; i < trianglesCount; ++i) {
+    voxelsOut.read(reinterpret_cast<char*>(&voxels[i]), sizeof(voxels[i]));
+  }
+  voxelsOut.close();
+
+  uint32_t maxVoxel = 0;
+  for (uint32_t i = 0; i < voxels.size(); ++i) {
+    maxVoxel = max(maxVoxel, voxels[i]);
+  }
+
   std::cout << trianglesCount << " triangles" << std::endl;
   ComputeFF(trianglesCount, instanceTriangles);
 
-  auto lighting = ComputeLightingClassic(emission, colors);
+  std::vector<uint32_t> mergedVoxels(colors.size());
+  ss = std::stringstream();
+  ss << "python ../../Dropbox/Diser/Experiments/clusterization.py " << colors.size();
+  std::string mergeScript = ss.str();
+  //FILE* in = _popen(mergeScript.c_str(), "r");
+  //for (int i = 0; i < colors.size(); ++i) {
+  //  fscanf_s(in, "%d", &mergedVoxels[i]);
+  //  maxVoxel = max(maxVoxel, mergedVoxels[i]);
+  //}
+  //_pclose(in);
+
+  //mergedVoxels.clear();
+  //for (uint32_t i = 0; i < colors.size(); ++i)
+  //  mergedVoxels.push_back(i);
+
+  //std::vector<float> squares(instanceTriangles.size());
+  //for (int i = 0; i < instanceTriangles.size(); ++i) {
+  //  squares[i] = 1;// triangle_square(instanceTriangles[i]);
+  //}
+
+  //maxVoxel = mergedVoxels.size();
+  std::vector<std::vector<uint32_t>> clusters;// = merge_triangles(mergedVoxels, colors, emission, squares, FF);
+  clusters.resize(colors.size());
+  for (uint32_t i = 0; i < clusters.size(); ++i) {
+    clusters[i].push_back(i);
+  }
+  std::vector<float3> randColors(maxVoxel + 1);
+  for (auto& col : randColors) {
+    col.x = (float)rand() / RAND_MAX;
+    col.y = (float)rand() / RAND_MAX;
+    col.z = (float)rand() / RAND_MAX;
+  }
+
+  //auto lighting = ComputeLightingClassic(emission, colors, clusters);
+  auto lighting = ComputeLightingRandom(emission, colors);
+  for (uint32_t i = 0; i < voxels.size(); ++i) {
+    //lighting[i] = randColors[mergedVoxels[i]];
+  }
 
   auto triangles = instanceTriangles;
 
-  hrSceneLibraryOpen(L"GI_res/scene.xml", HR_WRITE_DISCARD);
+  HRInitInfo initInfo;
+  initInfo.vbSize = 1024 * 1024 * 128;
+  hrSceneLibraryOpen(L"GI_res/scene.xml", HR_WRITE_DISCARD, initInfo);
   HRSceneInstRef scene = hrSceneCreate(L"Scene");
   hrSceneOpen(scene, HR_WRITE_DISCARD);
 
@@ -606,7 +870,7 @@ void RD_FFIntegrator::EndScene() {
   for (int i = 0; i < lighting.size(); ++i) {
     materials.push_back(i);
     for (int j = 0; j < 3; ++j) {
-      indices.push_back(indices.size());
+      indices.push_back(static_cast<int>(indices.size()));
     }
     points.insert(points.end(), triangles[i].points.begin(), triangles[i].points.end());
     normals.insert(normals.end(), triangles[i].normal.value().begin(), triangles[i].normal.value().end());
@@ -621,7 +885,7 @@ void RD_FFIntegrator::EndScene() {
   hrMeshVertexAttribPointer4f(mesh, L"normals", reinterpret_cast<float*>(normals.data()));
   hrMeshVertexAttribPointer4f(mesh, L"tangent", reinterpret_cast<float*>(tangents.data()));
   hrMeshVertexAttribPointer2f(mesh, L"texcoord", reinterpret_cast<float*>(texCoords.data()));
-  hrMeshAppendTriangles3(mesh, indices.size(), reinterpret_cast<int*>(indices.data()));
+  hrMeshAppendTriangles3(mesh, static_cast<int>(indices.size()), reinterpret_cast<int*>(indices.data()));
   hrMeshClose(mesh);
 
   std::array<float, 16> matrix = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
@@ -639,7 +903,10 @@ void window_main_ff_integrator(const wchar_t* a_libPath, const wchar_t* a_render
   noInterpolation = no_interpolation;
   hrErrorCallerPlace(L"Init");
 
-  hrSceneLibraryOpen(a_libPath, HR_OPEN_EXISTING);
+  HRInitInfo initInfo;
+  initInfo.vbSize = 1024 * 1024 * 128;
+  initInfo.sortMaterialIndices = false;
+  hrSceneLibraryOpen(a_libPath, HR_OPEN_EXISTING, initInfo);
 
   HRSceneLibraryInfo scnInfo = hrSceneLibraryInfo();
 

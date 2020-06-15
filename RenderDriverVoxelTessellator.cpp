@@ -57,7 +57,7 @@ static Scene gen_scene(const HRMeshDriverInput& a_input) {
   }
 
   triangles.materials = std::vector<uint32_t>(materials, materials + a_input.triNum);
-  for (uint32_t i = 0; i < a_input.triNum; ++i) {
+  for (int i = 0; i < a_input.triNum; ++i) {
     triangles.polygons[i].resize(3);
     for (uint32_t j = 0; j < 3; ++j) {
       triangles.polygons[i][j] = indices[3 * i + j];
@@ -134,7 +134,7 @@ void append(std::vector<T>& a, const std::vector<T>& b) {
 }
 
 void Scene::addScene(const Scene& scene) {
-  const uint32_t indexShift = positions.size();
+  const uint32_t indexShift = static_cast<uint32_t>(positions.size());
   append(positions, scene.positions);
   append(normals, scene.normals);
   append(tangents, scene.tangents);
@@ -273,7 +273,7 @@ uint32_t Scene::addMidVertex(uint32_t idx1, uint32_t idx2, float t) {
   normals.push_back(lerp(normals[idx1], normals[idx2], t));
   tangents.push_back(lerp(tangents[idx1], tangents[idx2], t));
   texCoords.push_back(lerp(texCoords[idx1], texCoords[idx2], t));
-  return positions.size() - 1;
+  return static_cast<uint32_t>(positions.size()) - 1;
 }
 
 #undef max
@@ -360,7 +360,7 @@ static void split_triangles_along_axis(Scene& scene, uint32_t &last_slice_size) 
   for (float edge = bmin + voxelSize; edge < bmax; edge += voxelSize) {
     split_triangles_by_plane<coord>(scene, edge, last_slice_size);
   }
-  last_slice_size *= ceil((bmax - bmin) / voxelSize);
+  last_slice_size *= static_cast<uint32_t>(ceil((bmax - bmin) / voxelSize));
 }
 
 float3 max(const float3& a, const float4& b) {
@@ -384,8 +384,8 @@ void Scene::compress() {
     bmax = max(bmax, pos);
     bmin = min(bmin, pos);
   }
-  bmax += 1e-5;
-  bmin -= 1e-5;
+  bmax += 1e-5f;
+  bmin -= 1e-5f;
   float3 gridScale = 1.f / (bmax - bmin) * sideSize;
   bins.resize(sideSize * sideSize * sideSize);
   for (uint32_t i = 0; i < positions.size(); ++i) {
@@ -397,14 +397,12 @@ void Scene::compress() {
   //TODO: We can blur bins to increase accuracy
 
   for (uint32_t i = 0; i < bins.size(); ++i) {
-    for (int iter1 = bins[i].size() - 1; iter1 > 0; --iter1) {
+    for (int iter1 = static_cast<int>(bins[i].size()) - 1; iter1 > 0; --iter1) {
       const uint32_t idx1 = bins[i][iter1];
       for (int iter2 = iter1 - 1; iter2 >= 0; --iter2) {
         const uint32_t idx2 = bins[i][iter2];
         if (isNear(positions[idx1], positions[idx2]) && isNear(normals[idx1], normals[idx2]) && isNear(tangents[idx1], tangents[idx2]) && isNear(texCoords[idx1], texCoords[idx2])) {
           removeAndReplaceIdx.emplace_back(idx1, idx2);
-          //removedIndices.push_back(idx1);
-          //replacers.push_back(idx2);
           break;
         }
       }
@@ -416,19 +414,13 @@ void Scene::compress() {
   std::vector<float4> compressedNormals;
   std::vector<float4> compressedTangents;
   std::vector<float2> compressedTexCoords;
-  //for (uint32_t i = 0; i < removeAndReplaceIdx.size(); ++i) {
-  //  positions.erase(positions.begin() + removeAndReplaceIdx[i].first);
-  //  normals.erase(normals.begin() + removeAndReplaceIdx[i].first);
-  //  tangents.erase(tangents.begin() + removeAndReplaceIdx[i].first);
-  //  texCoords.erase(texCoords.begin() + removeAndReplaceIdx[i].first);
-  //}
-  int idxToRemove = removeAndReplaceIdx.size() - 1;
+  int idxToRemove = static_cast<int>(removeAndReplaceIdx.size()) - 1;
   uint32_t uncompressedIdx = 0;
   std::vector<uint32_t> newIndex;
   newIndex.reserve(positions.size());
   while (idxToRemove >= 0) {
     while (idxToRemove >= 0 && uncompressedIdx < std::min(removeAndReplaceIdx[idxToRemove].first, (uint32_t)positions.size())) {
-      newIndex.push_back(compressedPositions.size());
+      newIndex.push_back(static_cast<uint32_t>(compressedPositions.size()));
       compressedPositions.push_back(positions[uncompressedIdx]);
       compressedNormals.push_back(normals[uncompressedIdx]);
       compressedTangents.push_back(tangents[uncompressedIdx]);
@@ -440,7 +432,7 @@ void Scene::compress() {
     uncompressedIdx++;
   }
   while (uncompressedIdx < positions.size()) {
-    newIndex.push_back(compressedPositions.size());
+    newIndex.push_back(static_cast<uint32_t>(compressedPositions.size()));
     compressedPositions.push_back(positions[uncompressedIdx]);
     compressedNormals.push_back(normals[uncompressedIdx]);
     compressedTangents.push_back(tangents[uncompressedIdx]);
@@ -453,31 +445,9 @@ void Scene::compress() {
   tangents = compressedTangents;
   texCoords = compressedTexCoords;
 
-  //for (int i = positions.size() - 1; i > 0; --i) {
-  //  for (int j = i - 1; j >= 0; --j) {
-  //    if (isNear(positions[i], positions[j]) && isNear(normals[i], normals[j]) && isNear(tangents[i], tangents[j]) && isNear(texCoords[i], texCoords[j])) {
-  //      //positions.erase(positions.begin() + i);
-  //      //normals.erase(normals.begin() + i);
-  //      //tangents.erase(tangents.begin() + i);
-  //      //texCoords.erase(texCoords.begin() + i);
-  //      removedIndices.push_back(i);
-  //      replacers.push_back(j);
-  //      break;
-  //    }
-  //  }
-  //}
-
   for (auto& p : polygons) {
     for (auto& idx : p) {
       idx = newIndex[idx];
-      //for (int i = 0; i < removeAndReplaceIdx.size(); ++i) {
-      //  if (idx == removeAndReplaceIdx[i].first) {
-      //    idx = removeAndReplaceIdx[i].second;
-      //  }
-      //  else if (idx > removeAndReplaceIdx[i].first) {
-      //    idx--;
-      //  }
-      //}
     }
   }
 }
@@ -491,7 +461,7 @@ static void GatherPolygons(Scene& scene) {
   std::vector<float3> normals;
   std::vector<uint32_t> polygons;
 
-  for (int i = scene.polygons.size() - 1; i > 0; --i) {
+  for (int i = static_cast<int>(scene.polygons.size()) - 1; i > 0; --i) {
     bool merged = false;
     for (int j = i - 1; !merged && j >= 0; --j) {
       if (scene.materials[i] != scene.materials[j] || !isNear(scene.normals[scene.polygons[i][0]], scene.normals[scene.polygons[j][0]])) {
@@ -520,37 +490,6 @@ static void GatherPolygons(Scene& scene) {
       }
     }
   }
-  //std::unordered_map<uint64_t, uint32_t> soupOfEdges;
-  //std::vector<std::unordered_set<uint64_t>> polygons;
-  //for (uint32_t i = 0; i < scene.polygons.size(); ++i) {
-  //  std::cout << i << std::endl;
-  //  std::vector<uint32_t> polygonsToMerge;
-  //  std::unordered_set<uint64_t> edges;
-  //  for (uint32_t j = 0; j < scene.polygons[i].size(); ++j) {
-  //    edges.insert(pack_edge(scene.polygons[i][j], scene.polygons[i][(j + 1) % scene.polygons[i].size()]));
-  //  }
-  //  for (auto edge : edges) {
-  //    for (uint32_t j = 0; j < polygons.size(); ++j) {
-  //      if (polygons[j].count(edge)) {
-  //        polygonsToMerge.push_back(j);
-  //        break;
-  //      }
-  //    }
-  //  }
-  //  polygonsToMerge.push_back(polygons.size());
-  //  polygons.push_back(edges);
-  //  for (uint32_t i = polygonsToMerge.size() - 1; i > 0; i--) {
-  //    for (auto edge : polygons[polygonsToMerge[i]]) {
-  //      if (polygons[polygonsToMerge[0]].count(edge)) {
-  //        polygons[polygonsToMerge[0]].erase(edge);
-  //      } else {
-  //        polygons[polygonsToMerge[0]].insert(edge);
-  //      }
-  //    }
-  //    polygons.erase(polygons.begin() + polygonsToMerge[i]);
-  //  }
-  //}
-  //std::cout << polygons.size() << std::endl;
 }
 
 void RD_VoxelTessellator::EndScene() {
@@ -620,6 +559,7 @@ void RD_VoxelTessellator::EndScene() {
     materials[materialColor.first].emission = materialColor.second;
   }
   Scene triangles = PolygonsToTriangles(fullScene);
+  triangles.compress();
 
   allRemapLists = std::vector<int>();
   tableOffsetsAndSize = std::vector<int2>();
@@ -629,7 +569,10 @@ void RD_VoxelTessellator::EndScene() {
   matEmission = std::map<int, float3>();
 
   hrSceneLibraryClose();
-  hrSceneLibraryOpen(L"Tessellated", HR_WRITE_DISCARD);
+  HRInitInfo initInfo;
+  initInfo.vbSize = 1024 * 1024 * 128;
+  initInfo.sortMaterialIndices = false;
+  hrSceneLibraryOpen(L"Tessellated", HR_WRITE_DISCARD, initInfo);
   HRSceneInstRef scene = hrSceneCreate(L"Scene");
   hrSceneOpen(scene, HR_WRITE_DISCARD);
 
@@ -669,6 +612,44 @@ void RD_VoxelTessellator::EndScene() {
     hrMaterialClose(matRef);
   }
 
+  std::stringstream ss;
+  ss << "VoxelIds" << triangles.voxelIds.size();
+  std::ofstream fout(ss.str(), std::ios::binary);
+  std::unordered_map<uint32_t, uint32_t> voxelsRemap;
+  for (uint32_t i = 0; i < triangles.voxelIds.size(); ++i) {
+    if (voxelsRemap.find(triangles.voxelIds[i]) != voxelsRemap.end()) {
+      continue;
+    }
+    voxelsRemap[triangles.voxelIds[i]] = static_cast<uint32_t>(voxelsRemap.size());
+  }
+  for (uint32_t i = 0; i < triangles.voxelIds.size(); ++i) {
+    triangles.voxelIds[i] = voxelsRemap[triangles.voxelIds[i]];
+  }
+
+  std::vector<int> idxReorderPerMat(triangles.materials.size());
+  for (uint32_t i = 0; i < idxReorderPerMat.size(); ++i) {
+    idxReorderPerMat[i] = i;
+  }
+  std::sort(idxReorderPerMat.begin(), idxReorderPerMat.end(), [&triangles](int a, int b) {return triangles.materials[a] < triangles.materials[b]; });
+  std::vector<uint32_t> newVox(idxReorderPerMat.size()), newMat(idxReorderPerMat.size());
+  std::vector<ScenePolygon> newPoly(idxReorderPerMat.size());
+  for (uint32_t i = 0; i < idxReorderPerMat.size(); ++i)
+  {
+    newVox[i] = triangles.voxelIds[idxReorderPerMat[i]];
+    newMat[i] = triangles.materials[idxReorderPerMat[i]];
+    newPoly[i] = triangles.polygons[idxReorderPerMat[i]];
+  }
+  //triangles.voxelIds = newVox;
+  //triangles.materials = newMat;
+  //triangles.polygons = newPoly;
+
+  uint32_t trianglesCount = static_cast<uint32_t>(triangles.voxelIds.size());
+  fout.write(reinterpret_cast<char*>(&trianglesCount), sizeof(trianglesCount));
+  for (uint32_t i = 0; i < trianglesCount; ++i) {
+    fout.write(reinterpret_cast<char*>(&triangles.voxelIds[i]), sizeof(triangles.voxelIds[i]));
+  }
+  fout.close();
+
   auto mesh = hrMeshCreate(L"Whole scene");
   hrMeshOpen(mesh, HR_TRIANGLE_IND12, HR_WRITE_DISCARD);
   std::vector<uint32_t> indices;
@@ -678,35 +659,16 @@ void RD_VoxelTessellator::EndScene() {
     indices.push_back(p[2]);
   }
   hrMeshPrimitiveAttribPointer1i(mesh, L"mind", reinterpret_cast<int*>(triangles.materials.data()));
-  hrMeshPrimitiveAttribPointer1i(mesh, L"voxel_ids", reinterpret_cast<int*>(triangles.voxelIds.data()));
   hrMeshVertexAttribPointer4f(mesh, L"positions", reinterpret_cast<float*>(triangles.positions.data()));
   hrMeshVertexAttribPointer4f(mesh, L"normals", reinterpret_cast<float*>(triangles.normals.data()));
   hrMeshVertexAttribPointer4f(mesh, L"tangent", reinterpret_cast<float*>(triangles.tangents.data()));
   hrMeshVertexAttribPointer2f(mesh, L"texcoord", reinterpret_cast<float*>(triangles.texCoords.data()));
-  hrMeshAppendTriangles3(mesh, indices.size(), reinterpret_cast<int*>(indices.data()));
+  hrMeshAppendTriangles3(mesh, static_cast<int>(indices.size()), reinterpret_cast<int*>(indices.data()), false);
   hrMeshClose(mesh);
 
   std::array<float, 16> matrix = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
   hrMeshInstance(scene, mesh, matrix.data());
 
-  //for (int i = 0; i < triangles.size(); ++i) {
-  //  std::wstringstream ss = std::wstringstream();
-  //  ss << "Mesh" << i;
-  //  auto mesh = hrMeshCreate(ss.str().c_str());
-  //  hrMeshOpen(mesh, HR_TRIANGLE_IND12, HR_WRITE_DISCARD);
-  //  std::array<int, 3> quadIdx = { 0, 1, 2 };
-  //  //hrMeshMaterialId(mesh, triangles[i].materialId);
-  //  hrMeshMaterialId(mesh, 0);
-  //  hrMeshVertexAttribPointer4f(mesh, L"positions", reinterpret_cast<float*>(triangles[i].points.data()));
-  //  hrMeshVertexAttribPointer4f(mesh, L"normals", reinterpret_cast<float*>(triangles[i].normal.value().data()));
-  //  hrMeshVertexAttribPointer4f(mesh, L"tangent", reinterpret_cast<float*>(triangles[i].tangent.value().data()));
-  //  hrMeshVertexAttribPointer2f(mesh, L"texcoord", reinterpret_cast<float*>(triangles[i].texCoords.data()));
-  //  hrMeshAppendTriangles3(mesh, 3, quadIdx.data());
-  //  hrMeshClose(mesh);
-
-  //  std::array<float, 16> matrix = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-  //  hrMeshInstance(scene, mesh, matrix.data());
-  //}
   hrSceneClose(scene);
   hrFlush(scene);
 }
@@ -718,7 +680,10 @@ void window_main_voxel_tessellator(const wchar_t* a_libPath, const wchar_t* a_re
   voxelSize = voxel_size;
   hrErrorCallerPlace(L"Init");
 
-  hrSceneLibraryOpen(a_libPath, HR_OPEN_EXISTING);
+  HRInitInfo initInfo;
+  initInfo.vbSize = 1024 * 1024 * 128;
+  initInfo.sortMaterialIndices = false;
+  hrSceneLibraryOpen(a_libPath, HR_OPEN_EXISTING, initInfo);
 
   HRSceneLibraryInfo scnInfo = hrSceneLibraryInfo();
 
