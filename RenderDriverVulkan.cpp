@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <filesystem>
 #include <set>
 
 
@@ -720,6 +721,9 @@ int32_t findProperties(const VkPhysicalDeviceMemoryProperties* pMemoryProperties
 }
 
 extern GLFWwindow* g_window;
+extern std::wstring sceneName;
+static std::wstring dataFolder;
+static uint32_t trianglesCount;
 
 bool checkValidationLayerSupport() {
   uint32_t layerCount;
@@ -1372,8 +1376,8 @@ void RD_Vulkan::recreateSwapChain() {
   createFramebuffers();
 }
 
-static VkDescriptorSetLayout create_descriptors_set_layout(VkDevice device, const uint32_t uniform_buffers_count, const uint32_t textures_count, const VkShaderStageFlagBits buffers_bits) {
-  std::vector<VkDescriptorSetLayoutBinding> bindings(uniform_buffers_count + textures_count);
+static VkDescriptorSetLayout create_descriptors_set_layout(VkDevice device, const uint32_t uniform_buffers_count, const uint32_t storage_buffers_count, const uint32_t textures_count, const VkShaderStageFlagBits buffers_bits) {
+  std::vector<VkDescriptorSetLayoutBinding> bindings(uniform_buffers_count + storage_buffers_count + textures_count);
   for (uint32_t i = 0; i < uniform_buffers_count; ++i) {
     VkDescriptorSetLayoutBinding uboLayoutBinding = {};
     bindings[i].binding = i;
@@ -1383,7 +1387,16 @@ static VkDescriptorSetLayout create_descriptors_set_layout(VkDevice device, cons
     bindings[i].pImmutableSamplers = nullptr; // Optional
   }
 
-  for (uint32_t i = uniform_buffers_count; i < uniform_buffers_count + textures_count; ++i) {
+  for (uint32_t i = uniform_buffers_count; i < uniform_buffers_count + storage_buffers_count; ++i) {
+    VkDescriptorSetLayoutBinding uboLayoutBinding = {};
+    bindings[i].binding = i;
+    bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[i].descriptorCount = 1;
+    bindings[i].stageFlags = buffers_bits;
+    bindings[i].pImmutableSamplers = nullptr; // Optional
+  }
+
+  for (uint32_t i = uniform_buffers_count + storage_buffers_count; i < uniform_buffers_count + storage_buffers_count + textures_count; ++i) {
     VkDescriptorSetLayoutBinding uboLayoutBinding = {};
     bindings[i].binding = i;
     bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -1403,16 +1416,18 @@ static VkDescriptorSetLayout create_descriptors_set_layout(VkDevice device, cons
 }
 
 void RD_Vulkan::createDescriptorSetLayout() {
-  gbufferDescriptorSetLayout = create_descriptors_set_layout(device, 1, 1, VK_SHADER_STAGE_VERTEX_BIT);
-  descriptorSetLayout = create_descriptors_set_layout(device, 2, 3, VK_SHADER_STAGE_FRAGMENT_BIT);
+  gbufferDescriptorSetLayout = create_descriptors_set_layout(device, 1, 0, 1, VK_SHADER_STAGE_VERTEX_BIT);
+  descriptorSetLayout = create_descriptors_set_layout(device, 2, 1, 3, VK_SHADER_STAGE_FRAGMENT_BIT);
 }
 
 void RD_Vulkan::createDescriptorPool() {
-  std::array<VkDescriptorPoolSize, 2> poolSizes = {};
+  std::array<VkDescriptorPoolSize, 3> poolSizes = {};
   poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
   poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
-  poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+  poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  poolSizes[2].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
 
   VkDescriptorPoolCreateInfo poolInfo = {};
   poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1435,7 +1450,7 @@ void RD_Vulkan::createDescriptorSets() {
   VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()));
 
   for (size_t i = 0; i < swapChainImages.size(); i++) {
-    std::vector<VkWriteDescriptorSet> descriptorWrites(2);
+    std::vector<VkWriteDescriptorSet> descriptorWrites(3);
 
     std::array<VkDescriptorBufferInfo, 2> buffersInfo;
     buffersInfo[0].buffer = lightsBuffer;
@@ -1444,7 +1459,13 @@ void RD_Vulkan::createDescriptorSets() {
 
     buffersInfo[1].buffer = resolveConstants;
     buffersInfo[1].offset = 0;
-    buffersInfo[1].range = sizeof(float4x4);
+    buffersInfo[1].range = sizeof(float4) * (4 + 3);
+
+    VkDescriptorBufferInfo lightingBufferInfo = {};
+    lightingBufferInfo.buffer = lightingBuffer;
+    lightingBufferInfo.offset = 0;
+    lightingBufferInfo.range = lightingBufferSize;
+
 
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[0].dstSet = descriptorSets[i];
@@ -1453,6 +1474,16 @@ void RD_Vulkan::createDescriptorSets() {
     descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     descriptorWrites[0].descriptorCount = buffersInfo.size();
     descriptorWrites[0].pBufferInfo = buffersInfo.data();
+
+    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[1].dstSet = descriptorSets[i];
+    descriptorWrites[1].dstBinding = 2;
+    descriptorWrites[1].dstArrayElement = 0;
+    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites[1].descriptorCount = 1;
+    descriptorWrites[1].pBufferInfo = &lightingBufferInfo;
+    descriptorWrites[1].pImageInfo = nullptr; // Optional
+    descriptorWrites[1].pTexelBufferView = nullptr; // Optional
     
     VkDescriptorImageInfo colorImageInfo = {};
     colorImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1471,13 +1502,13 @@ void RD_Vulkan::createDescriptorSets() {
 
     std::array<VkDescriptorImageInfo, 3> imagesInfo = { colorImageInfo, normalImageInfo, depthImageInfo };
 
-    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[1].dstSet = descriptorSets[i];
-    descriptorWrites[1].dstBinding = 2;
-    descriptorWrites[1].dstArrayElement = 0;
-    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    descriptorWrites[1].descriptorCount = imagesInfo.size();
-    descriptorWrites[1].pImageInfo = imagesInfo.data();
+    descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[2].dstSet = descriptorSets[i];
+    descriptorWrites[2].dstBinding = 3;
+    descriptorWrites[2].dstArrayElement = 0;
+    descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[2].descriptorCount = imagesInfo.size();
+    descriptorWrites[2].pImageInfo = imagesInfo.data();
 
     vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
   }
@@ -1597,6 +1628,60 @@ VkFormat RD_Vulkan::findDepthFormat() {
   );
 }
 
+void RD_Vulkan::createLightingBuffer() {
+  {
+    std::wstringstream ss;
+    trianglesCount = 3194;//HotFix;
+    ss << L"ScenesData/" << sceneName << "/" << trianglesCount;
+    dataFolder = ss.str();
+    if (!std::filesystem::exists(dataFolder)) {
+      std::filesystem::create_directory(dataFolder);
+    }
+  }
+
+  uint3 voxelGridSize;
+  std::ifstream VoxelGridLightingIn(dataFolder + L"/VoxelGridLighting.bin", std::ios::binary | std::ios::in);
+  VoxelGridLightingIn.read(reinterpret_cast<char*>(&voxelGridSize), sizeof(voxelGridSize));
+  gridSize.x = voxelGridSize.x;
+  gridSize.y = voxelGridSize.y;
+  gridSize.z = voxelGridSize.z;
+  float3 boxmin;
+  float3 boxmax;
+  VoxelGridLightingIn.read(reinterpret_cast<char*>(&boxmin), sizeof(boxmin));
+  VoxelGridLightingIn.read(reinterpret_cast<char*>(&boxmax), sizeof(boxmax));
+  bmin = to_float4(boxmin, 1);
+  bmax = to_float4(boxmax, 1);
+  std::vector<std::array<float4, 3>> voxelsGridColors(gridSize.x * gridSize.y * gridSize.z);
+  for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
+    std::array<float3, 4> colors;
+    for (uint32_t j = 0; j < colors.size(); ++j) {
+      VoxelGridLightingIn.read(reinterpret_cast<char*>(&colors[j]), sizeof(colors[j]));
+    }
+    voxelsGridColors[i][0] = float4(colors[0].x, colors[1].x, colors[2].x, colors[3].x);
+    voxelsGridColors[i][1] = float4(colors[0].y, colors[1].y, colors[2].y, colors[3].y);
+    voxelsGridColors[i][2] = float4(colors[0].z, colors[1].z, colors[2].z, colors[3].z);
+  }
+  VoxelGridLightingIn.close();
+
+  lightingBufferSize = sizeof(voxelsGridColors[0]) * voxelsGridColors.size();
+  VkDeviceSize bufferSize = lightingBufferSize;
+
+  VkBuffer stagingBuffer;
+  VkDeviceMemory stagingBufferMemory;
+  BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+  void* data;
+  vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+  memcpy(data, voxelsGridColors.data(), (size_t)bufferSize);
+  vkUnmapMemory(device, stagingBufferMemory);
+
+  BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, lightingBuffer, lightingMemory);
+
+  BufferManager::get().copyBuffer(stagingBuffer, lightingBuffer, bufferSize);
+  vkDestroyBuffer(device, stagingBuffer, nullptr);
+  vkFreeMemory(device, stagingBufferMemory, nullptr);
+}
+
 RD_Vulkan::RD_Vulkan()
 {
   createInstance();
@@ -1615,6 +1700,7 @@ RD_Vulkan::RD_Vulkan()
   createColorResources();
   createDepthResources();
   createBuffers();
+  createLightingBuffer();
   createDescriptorPool();
   createDescriptorSets();
   createFramebuffers();
@@ -1660,6 +1746,9 @@ RD_Vulkan::~RD_Vulkan()
 
   vkDestroyBuffer(device, matricesBuffer, nullptr);
   vkFreeMemory(device, matricesBufferMemory, nullptr);
+
+  vkDestroyBuffer(device, lightingBuffer, nullptr);
+  vkFreeMemory(device, lightingMemory, nullptr);
 
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -1736,8 +1825,14 @@ static float3 parse_color(const pugi::char_t* s) {
 
 bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
 {
+  if (materials.size() <= a_matId) {
+    materials.resize(a_matId + 1);
+  }
+
+  materials[a_matId].color = float4(0, 0, 0, 0);
+  materials[a_matId].emission = float4(0, 0, 0, 0);
   pugi::xml_node clrNode = a_materialNode.child(L"diffuse").child(L"color");
-  pugi::xml_node texNode = clrNode.child(L"texture");
+  pugi::xml_node texNode = a_materialNode.child(L"diffuse").child(L"texture");
   pugi::xml_node mtxNode = a_materialNode.child(L"diffuse").child(L"sampler").child(L"matrix");
 
   bool isEmission = clrNode == nullptr;
@@ -1761,10 +1856,6 @@ bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
       m_diffColors[a_matId * 3 + 1] = color.y;
       m_diffColors[a_matId * 3 + 2] = color.z;
     }
-  }
-
-  if (materials.size() <= a_matId) {
-    materials.resize(a_matId + 1);
   }
 
   float4& color = materials[a_matId].color;
@@ -1902,6 +1993,7 @@ bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HR
   {
     return true;
   }
+  trianglesCount = a_input.triNum;
 
   bool invalidMaterial = m_diffTexId.empty();
 
@@ -1971,7 +2063,7 @@ void RD_Vulkan::BeginScene(pugi::xml_node a_sceneNode)
 
 void RD_Vulkan::createBuffers() {
   BufferManager::get().createBuffer(sizeof(directLights[0]), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightsBuffer, lightsBufferMemory);
-  BufferManager::get().createBuffer(sizeof(float4x4), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, resolveConstants, resolveConstantsMemory);
+  BufferManager::get().createBuffer(sizeof(float4) * (4 + 3), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, resolveConstants, resolveConstantsMemory);
 }
 
 void RD_Vulkan::EndScene()
@@ -1981,9 +2073,12 @@ void RD_Vulkan::EndScene()
   }
   inited = true;
   void* data;
-  vkMapMemory(device, lightsBufferMemory, 0, directLights.size() * sizeof(directLights[0]), 0, &data);
-  memcpy(data, directLights.data(), directLights.size() * sizeof(directLights[0]));
-  vkUnmapMemory(device, lightsBufferMemory);
+  if (!directLights.empty())
+  {
+    vkMapMemory(device, lightsBufferMemory, 0, directLights.size() * sizeof(directLights[0]), 0, &data);
+    memcpy(data, directLights.data(), directLights.size() * sizeof(directLights[0]));
+    vkUnmapMemory(device, lightsBufferMemory);
+  }
 
   createVertexBuffer();
   createIndexBuffer();
@@ -2051,6 +2146,10 @@ void RD_Vulkan::EndScene()
 
 void RD_Vulkan::Draw()
 {
+  if (!lightingInited) {
+    lightingInited = true;
+  }
+
   vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
   vkResetFences(device, 1, &inFlightFences[currentFrame]);
   vkQueueWaitIdle(graphicsQueue);
@@ -2112,8 +2211,15 @@ void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
   const float4x4 invGlobtm = inverse4x4(globtm);
   std::array<float4, 4> viewVecsData = { invGlobtm.row[0], invGlobtm.row[1], invGlobtm.row[2], invGlobtm.row[3] };
   void* data;
-  vkMapMemory(device, resolveConstantsMemory, 0, sizeof(viewVecsData), 0, &data);
+  vkMapMemory(device, resolveConstantsMemory, 0, sizeof(float4) * (4 + 3), 0, &data);
   memcpy(data, viewVecsData.data(), sizeof(viewVecsData));
+  data = reinterpret_cast<uint8_t*>(data) + sizeof(viewVecsData);
+  memcpy(data, viewVecsData.data(), sizeof(bmin));
+  data = reinterpret_cast<uint8_t*>(data) + sizeof(bmin);
+  memcpy(data, &bmax, sizeof(bmax));
+  data = reinterpret_cast<uint8_t*>(data) + sizeof(bmax);
+  memcpy(data, &gridSize, sizeof(gridSize));
+  data = reinterpret_cast<uint8_t*>(data) + sizeof(gridSize);
   vkUnmapMemory(device, resolveConstantsMemory);
 }
 

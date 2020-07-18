@@ -27,7 +27,7 @@ struct Scene
 struct RD_VoxelTessellator : public IHRRenderDriver {
   void ClearAll() override {}
   HRDriverAllocInfo AllocAll(HRDriverAllocInfo a_info) override { return a_info; }
-  bool UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, const void* a_data, pugi::xml_node a_texNode) override { return false; }
+  bool UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, const void* a_data, pugi::xml_node a_texNode) override;
   bool UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode) override;
   bool UpdateLight(int32_t a_lightId, pugi::xml_node a_lightNode) override { return false; }
   bool UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HRMeshDriverInput& a_input, const HRBatchInfo* a_batchList, int32_t listSize) override;
@@ -46,6 +46,7 @@ struct RD_VoxelTessellator : public IHRRenderDriver {
   void GetGBufferLine(int32_t a_lineNumber, HRGBufferPixel* a_lineData, int32_t a_startX, int32_t a_endX, const std::unordered_set<int32_t>& a_shadowCatchers) override {}
   const HRRenderDeviceInfoListElem* DeviceList() const override { return nullptr; }
   bool EnableDevice(int32_t id, bool a_enable) override { return false; }
+  virtual void GetRenderDriverName(std::wstring& name) { name = L"voxelTessellator"; };
 
   std::vector<int>  allRemapLists;
   std::vector<HydraLiteMath::int2> tableOffsetsAndSize;
@@ -56,4 +57,10 @@ struct RD_VoxelTessellator : public IHRRenderDriver {
 
   std::map<int, HydraLiteMath::float3> matColors;
   std::map<int, HydraLiteMath::float3> matEmission;
+  std::map<int, uint32_t> matTexture;
+  struct TexData {
+    uint32_t w, h, bpp;
+    std::vector<char> data;
+  };
+  std::map<int, TexData> textures;
 };

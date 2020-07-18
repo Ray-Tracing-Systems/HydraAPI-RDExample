@@ -149,6 +149,7 @@ protected:
   struct Material {
     int textureIdx = -1;
     HydraLiteMath::float4 color;
+    HydraLiteMath::float4 emission;
   };
 
   class BufferManager {
@@ -266,6 +267,7 @@ protected:
   void createColorResources();
   void createColorSampler();
   void createBuffers();
+  void createLightingBuffer();
   VkFormat findDepthFormat();
   QueueFamilyIndices GetQueueFamilyIndex();
 
@@ -374,4 +376,12 @@ protected:
   VkBuffer matricesBuffer = {};
   VkDeviceMemory matricesBufferMemory = {};
   HydraLiteMath::float4x4 globtm;
+
+  bool lightingInited = false;
+  VkBuffer lightingBuffer;
+  VkDeviceMemory lightingMemory;
+  uint32_t lightingBufferSize;
+  HydraLiteMath::uint4 gridSize;
+  HydraLiteMath::float4 bmin;
+  HydraLiteMath::float4 bmax;
 };

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <filesystem>
 #include <set>
 
 #include <LiteMath.h>
@@ -184,6 +185,7 @@ void RD_VoxelTessellator::InstanceMeshes(int32_t a_mesh_id, const float* a_matri
 
 bool RD_VoxelTessellator::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode) {
   pugi::xml_node clrNode = a_materialNode.child(L"diffuse").child(L"color");
+  pugi::xml_node texNode = a_materialNode.child(L"diffuse").child(L"texture");
 
   pugi::xml_node emisNode = a_materialNode.child(L"emission").child(L"color"); // no diffuse color ? => draw emission color instead!
 
@@ -203,6 +205,10 @@ bool RD_VoxelTessellator::UpdateMaterial(int32_t a_matId, pugi::xml_node a_mater
       input >> color.x >> color.y >> color.z;
       matColors[a_matId] = color;
     }
+  }
+
+  if (texNode != nullptr) {
+    matTexture[a_matId] = texNode.attribute(L"id").as_int();
   }
 
   if (emisNode != nullptr)
@@ -238,6 +244,7 @@ T lerpSquare(T p1, T p2, T p3, T p4, float x, float y) {
 }
 
 static float voxelSize;
+static std::wstring sceneName;
 
 
 struct Vertex
@@ -350,7 +357,7 @@ void split_triangles_by_plane(Scene& scene, float value, uint32_t slice_size) {
 }
 
 template <int coord>
-static void split_triangles_along_axis(Scene& scene, uint32_t &last_slice_size) {
+static void split_triangles_along_axis(Scene& scene, uint32_t &last_slice_size, uint32_t &axis_length) {
   float bmax = -1e9;
   float bmin = 1e9;
   for (const float4& pos : scene.positions) {
@@ -360,7 +367,8 @@ static void split_triangles_along_axis(Scene& scene, uint32_t &last_slice_size) 
   for (float edge = bmin + voxelSize; edge < bmax; edge += voxelSize) {
     split_triangles_by_plane<coord>(scene, edge, last_slice_size);
   }
-  last_slice_size *= static_cast<uint32_t>(ceil((bmax - bmin) / voxelSize));
+  axis_length = static_cast<uint32_t>(ceil((bmax - bmin) / voxelSize));
+  last_slice_size *= axis_length;
 }
 
 float3 max(const float3& a, const float4& b) {
@@ -492,6 +500,15 @@ static void GatherPolygons(Scene& scene) {
   }
 }
 
+bool RD_VoxelTessellator::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, const void* a_data, pugi::xml_node a_texNode) {
+  textures[a_texId].w = w;
+  textures[a_texId].h = h;
+  textures[a_texId].bpp = bpp;
+  textures[a_texId].data.resize(w * h * bpp);
+  memcpy(textures[a_texId].data.data(), a_data, w * h * bpp);
+  return true;
+}
+
 void RD_VoxelTessellator::EndScene() {
   //TODO: optimize generate triangles
 
@@ -517,19 +534,20 @@ void RD_VoxelTessellator::EndScene() {
   std::cout << "Init voxel indices " << elapsed_seconds.count() << std::endl;
   t1 = t2;
   uint32_t gridSize = 1;
-  split_triangles_along_axis<0>(fullScene, gridSize);
+  uint3 voxelGridSize;
+  split_triangles_along_axis<0>(fullScene, gridSize, voxelGridSize.x);
   t2 = std::chrono::system_clock::now();
   elapsed_seconds = t2 - t1;
   std::cout << "Split 1 finished " << elapsed_seconds.count() << std::endl;
   std::cout << fullScene.materials.size() << " polygons on scene\n";
   t1 = t2;
-  split_triangles_along_axis<1>(fullScene, gridSize);
+  split_triangles_along_axis<1>(fullScene, gridSize, voxelGridSize.y);
   t2 = std::chrono::system_clock::now();
   elapsed_seconds = t2 - t1;
   std::cout << "Split 2 finished " << elapsed_seconds.count() << std::endl;
   std::cout << fullScene.materials.size() << " polygons on scene\n";
   t1 = t2;
-  split_triangles_along_axis<2>(fullScene, gridSize);
+  split_triangles_along_axis<2>(fullScene, gridSize, voxelGridSize.z);
   t2 = std::chrono::system_clock::now();
   elapsed_seconds = t2 - t1;
   std::cout << "Split 3 finished " << elapsed_seconds.count() << std::endl;
@@ -543,6 +561,7 @@ void RD_VoxelTessellator::EndScene() {
   struct Material
   {
     std::optional<float3> diffuse, emission;
+    std::optional<uint32_t> texRef;
   };
 
   std::vector<Material> materials;
@@ -558,8 +577,16 @@ void RD_VoxelTessellator::EndScene() {
     }
     materials[materialColor.first].emission = materialColor.second;
   }
+  for (const auto tex : matTexture) {
+    if (materials.size() <= tex.first) {
+      materials.resize(tex.first + 1);
+    }
+    materials[tex.first].texRef = tex.second;
+  }
   Scene triangles = PolygonsToTriangles(fullScene);
   triangles.compress();
+
+  std::map<int, TexData> locTex = textures;
 
   allRemapLists = std::vector<int>();
   tableOffsetsAndSize = std::vector<int2>();
@@ -584,6 +611,10 @@ void RD_VoxelTessellator::EndScene() {
   }
   hrCameraClose(cam);
 
+  for (auto tex : locTex) {
+    auto id = hrTexture2DCreateFromMemory(tex.second.w, tex.second.h, tex.second.bpp, tex.second.data.data());
+  }
+
   for (uint32_t i = 0; i < materials.size(); ++i) {
     std::wstringstream ss;
     ss << "Material" << i;
@@ -599,6 +630,12 @@ void RD_VoxelTessellator::EndScene() {
       ss = std::wstringstream();
       ss << materials[i].diffuse.value().x << " " << materials[i].diffuse.value().y << ' ' << materials[i].diffuse.value().z;
       color.append_attribute(L"val").set_value(ss.str().c_str());
+      if (materials[i].texRef.has_value()) {
+        auto texRef = diffuse.append_child();
+        texRef.set_name(L"texture");
+        texRef.append_attribute(L"id").set_value(materials[i].texRef.value());
+        texRef.append_attribute(L"type").set_value(L"texref");
+      }
     }
     if (materials[i].emission.has_value()) {
       auto emission = material.append_child();
@@ -612,19 +649,27 @@ void RD_VoxelTessellator::EndScene() {
     hrMaterialClose(matRef);
   }
 
-  std::stringstream ss;
-  ss << "VoxelIds" << triangles.voxelIds.size();
-  std::ofstream fout(ss.str(), std::ios::binary);
-  std::unordered_map<uint32_t, uint32_t> voxelsRemap;
-  for (uint32_t i = 0; i < triangles.voxelIds.size(); ++i) {
-    if (voxelsRemap.find(triangles.voxelIds[i]) != voxelsRemap.end()) {
-      continue;
+  std::wstring outputFolder;
+  {
+    std::wstringstream ss;
+    ss << L"ScenesData/" << sceneName << "/" << triangles.voxelIds.size();
+    outputFolder = ss.str();
+    if (!std::filesystem::exists(outputFolder)) {
+      std::filesystem::create_directory(outputFolder);
     }
-    voxelsRemap[triangles.voxelIds[i]] = static_cast<uint32_t>(voxelsRemap.size());
   }
-  for (uint32_t i = 0; i < triangles.voxelIds.size(); ++i) {
-    triangles.voxelIds[i] = voxelsRemap[triangles.voxelIds[i]];
-  }
+
+  std::ofstream fout(outputFolder + L"/VoxelIds.bin", std::ios::binary);
+  //std::unordered_map<uint32_t, uint32_t> voxelsRemap;
+  //for (uint32_t i = 0; i < triangles.voxelIds.size(); ++i) {
+  //  if (voxelsRemap.find(triangles.voxelIds[i]) != voxelsRemap.end()) {
+  //    continue;
+  //  }
+  //  voxelsRemap[triangles.voxelIds[i]] = static_cast<uint32_t>(voxelsRemap.size());
+  //}
+  //for (uint32_t i = 0; i < triangles.voxelIds.size(); ++i) {
+  //  triangles.voxelIds[i] = voxelsRemap[triangles.voxelIds[i]];
+  //}
 
   std::vector<int> idxReorderPerMat(triangles.materials.size());
   for (uint32_t i = 0; i < idxReorderPerMat.size(); ++i) {
@@ -644,6 +689,7 @@ void RD_VoxelTessellator::EndScene() {
   //triangles.polygons = newPoly;
 
   uint32_t trianglesCount = static_cast<uint32_t>(triangles.voxelIds.size());
+  fout.write(reinterpret_cast<char*>(&voxelGridSize), sizeof(voxelGridSize));
   fout.write(reinterpret_cast<char*>(&trianglesCount), sizeof(trianglesCount));
   for (uint32_t i = 0; i < trianglesCount; ++i) {
     fout.write(reinterpret_cast<char*>(&triangles.voxelIds[i]), sizeof(triangles.voxelIds[i]));
@@ -676,14 +722,24 @@ void RD_VoxelTessellator::EndScene() {
 using DrawFuncType = void (*)();
 using InitFuncType = void (*)();
 
-void window_main_voxel_tessellator(const wchar_t* a_libPath, const wchar_t* a_renderName, float voxel_size) {
+void window_main_voxel_tessellator(const std::wstring& a_libPath, const std::wstring& scene_name, float voxel_size) {
   voxelSize = voxel_size;
   hrErrorCallerPlace(L"Init");
 
   HRInitInfo initInfo;
   initInfo.vbSize = 1024 * 1024 * 128;
   initInfo.sortMaterialIndices = false;
-  hrSceneLibraryOpen(a_libPath, HR_OPEN_EXISTING, initInfo);
+  const std::wstring scenePath = a_libPath + scene_name + L"/scenelib";
+  const std::wstring scenesFolder = L"ScenesData/";
+  if (!std::filesystem::exists(scenesFolder)) {
+    std::filesystem::create_directory(scenesFolder);
+  }
+  const std::wstring resultFolder = scenesFolder + scene_name;
+  sceneName = scene_name;
+  if (!std::filesystem::exists(resultFolder)) {
+    std::filesystem::create_directory(resultFolder);
+  }
+  hrSceneLibraryOpen(scenePath.c_str(), HR_OPEN_EXISTING, initInfo);
 
   HRSceneLibraryInfo scnInfo = hrSceneLibraryInfo();
 
@@ -715,7 +771,7 @@ void window_main_voxel_tessellator(const wchar_t* a_libPath, const wchar_t* a_re
   }
   hrCameraClose(camRef);
 
-  renderRef = hrRenderCreate(a_renderName);
+  renderRef = hrRenderCreate(L"voxelTessellator");
 
   auto pList = hrRenderGetDeviceList(renderRef);
 

@@ -4,6 +4,7 @@
 
 #include <array>
 #include <chrono>
+#include <filesystem>
 
 #include <cstdio>
 #include <cassert>
@@ -12,8 +13,6 @@
 #include <omp.h>
 
 #include <LiteMath.h>
-
-#include "SparseMatrix.h"
 
 #include "RenderDriverFormFactorIntegrator.h"
 
@@ -24,6 +23,8 @@ static HRCameraRef  camRef;
 static HRSceneInstRef scnRef;
 static std::unordered_map<std::wstring, std::wstring> camParams;
 static bool recompute_ff = false;
+static std::wstring sceneName;
+static std::wstring outputFolder;
 
 IHRRenderDriver* CreateFFIntegrator_RenderDriver()
 {
@@ -168,6 +169,7 @@ void RD_FFIntegrator::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices,
 
 bool RD_FFIntegrator::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode) {
   pugi::xml_node clrNode = a_materialNode.child(L"diffuse").child(L"color");
+  pugi::xml_node texNode = a_materialNode.child(L"diffuse").child(L"texture");
 
   pugi::xml_node emisNode = a_materialNode.child(L"emission").child(L"color"); // no diffuse color ? => draw emission color instead!
 
@@ -187,6 +189,10 @@ bool RD_FFIntegrator::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialN
       input >> color.x >> color.y >> color.z;
       matColors[a_matId] = color;
     }
+  }
+
+  if (texNode != nullptr) {
+    matTexture[a_matId] = texNode.attribute(L"id").as_int();
   }
 
   if (emisNode != nullptr)
@@ -418,14 +424,12 @@ public:
   }
 };
 
-
-void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator::Triangle>& triangles)
+void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator::Triangle>& triangles, const std::vector<float>& squares)
 {
   FF.resize(quadsCount);
 
-  std::stringstream ss;
-  ss << "FF" << quadsCount;
-  std::ifstream fin(ss.str(), std::ios::binary);
+  std::wstring ffFilename = outputFolder + L"/FF.bin";
+  std::ifstream fin(ffFilename, std::ios::binary);
   if (!recompute_ff && fin.is_open()) {
     uint32_t countFromFile = 0;
     fin.read(reinterpret_cast<char*>(&countFromFile), sizeof(countFromFile));
@@ -433,24 +437,22 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
     for (int i = 0; i < quadsCount; ++i) {
       uint32_t rowSize;
       fin.read(reinterpret_cast<char*>(&rowSize), sizeof(rowSize));
+      FF[i].resize(rowSize);
       for (int j = 0; j < rowSize; ++j) {
         uint32_t idx;
         float value;
         fin.read(reinterpret_cast<char*>(&idx), sizeof(idx));
         fin.read(reinterpret_cast<char*>(&value), sizeof(value));
-        FF[i].emplace_back(idx, value);
+        FF[i][j].first = idx;
+        FF[i][j].second = value;
       }
     }
     fin.close();
     return;
   }
-  std::ofstream fout(ss.str(), std::ios::binary);
+  std::ofstream fout(ffFilename, std::ios::binary);
 
   std::vector<std::vector<Sample>> samples = gen_samples(instanceTriangles);
-  std::vector<float> squares(quadsCount);
-  for (int i = 0; i < quadsCount; ++i) {
-    squares[i] = triangle_square(instanceTriangles[i]);
-  }
 
   EmbreeTracer tracer(triangles);
 
@@ -514,10 +516,17 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
       }
 #pragma omp critical
       if (value > 1e-9) {
-        FF[i].emplace_back(j, value * squares[j]);
-        FF[j].emplace_back(i, value * squares[i]);
+        const float val1 = value * squares[j];
+        const float val2 = value * squares[i];
+        if (val1 > 1e-9) {
+          FF[i].emplace_back(j, val1);
+        }
+        if (val2 > 1e-9) {
+          FF[j].emplace_back(i, val2);
+        }
       }
     }
+    std::sort(FF[i].begin(), FF[i].end());
   }
 
   fout.write(reinterpret_cast<const char*>(&quadsCount), sizeof(quadsCount));
@@ -534,7 +543,7 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
   fout.close();
 }
 
-std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<float3>& emission, const std::vector<float3>& colors, const std::vector<std::vector<uint32_t>>& clusters) {
+std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<float3>& emission, const std::vector<float3>& colors) {
   const int quadsCount = colors.size();
   std::vector<float3> incident;
   std::vector<float3> lighting(emission);
@@ -544,26 +553,17 @@ std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<fl
 #pragma omp parallel for num_threads(7)
     for (int i = 0; i < quadsCount; ++i) {
       for (uint32_t j = 0; j < FF[i].size(); ++j)
-      //for (int j = 0; j < quadsCount; ++j) {
         incident[i] += FF[i][j].second * excident[FF[i][j].first];
-      //}
     }
 #pragma omp parallel for num_threads(7)
     for (int i = 0; i < quadsCount; ++i) {
       excident[i] = incident[i] * colors[i];
-      lighting[i] += excident[i];
-    }
-  }
-  std::vector<float3> unrolledLight;
-  for (uint32_t i = 0; i < clusters.size(); ++i) {
-    for (uint32_t j = 0; j < clusters[i].size(); ++j) {
-      if (unrolledLight.size() <= clusters[i][j]) {
-        unrolledLight.resize(clusters[i][j] + 1);
+      if (iter != 0 || true) {
+        lighting[i] += incident[i];// excident[i];
       }
-      unrolledLight[clusters[i][j]] = lighting[i];
     }
   }
-  return unrolledLight;
+  return lighting;
 }
 
 std::vector<float3> RD_FFIntegrator::ComputeLightingRandom(const std::vector<float3>& emission, const std::vector<float3>& colors) {
@@ -752,8 +752,129 @@ std::vector<std::vector<uint32_t>> merge_triangles(
 static int tessFactor;
 static bool noInterpolation;
 
+bool RD_FFIntegrator::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, const void* a_data, pugi::xml_node a_texNode) {
+  textures[a_texId].w = w;
+  textures[a_texId].h = h;
+  textures[a_texId].bpp = bpp;
+  textures[a_texId].data.resize(w * h * bpp);
+  memcpy(textures[a_texId].data.data(), a_data, w * h * bpp);
+  return true;
+}
+
+void merge_ff(std::vector<uint32_t>& voxels,
+  std::vector<float3>& colors,
+  std::vector<float3>& emission,
+  std::vector<float3>& normals,
+  std::vector<float>& squares,
+  std::vector<std::vector<std::pair<int, float>>>& ff
+) {
+  Timer t("Merge ff");
+
+  std::unordered_map<uint32_t, std::vector<uint32_t>> perVoxelSplits;
+  for (uint32_t i = 0; i < voxels.size(); ++i) {
+    perVoxelSplits[voxels[i]].push_back(i);
+  }
+  std::vector<std::vector<uint32_t>> patchesToMerge;
+  std::vector<uint32_t> remapList(voxels.size(), 0);
+  for (auto inVoxelIds : perVoxelSplits) {
+    const uint32_t splitId = patchesToMerge.size();
+    for (uint32_t i = 0; i < inVoxelIds.second.size(); ++i) {
+      const uint32_t idx = inVoxelIds.second[i];
+      uint32_t j = splitId;
+      for (; j < patchesToMerge.size(); ++j) {
+        const uint32_t refIdx = patchesToMerge[j][0];
+        if (lengthSquare(normals[idx] - normals[refIdx]) < 1e-5f && lengthSquare(colors[idx] - colors[refIdx]) < 1e-5f) {
+          patchesToMerge[j].push_back(idx);
+          break;
+        }
+      }
+      if (j == patchesToMerge.size()) {
+        patchesToMerge.push_back({ idx });
+      }
+      remapList[idx] = j;
+    }
+  }
+
+  std::vector<std::vector<std::pair<int, float>>> compressedFF(patchesToMerge.size());
+  std::vector<uint32_t> compressedVoxels(patchesToMerge.size());
+  std::vector<float3> compressedColors(patchesToMerge.size());
+  std::vector<float3> compressedEmission(patchesToMerge.size());
+  std::vector<float3> compressedNormals(patchesToMerge.size());
+  std::vector<float> compressedSqaures(patchesToMerge.size(), 0);
+#pragma omp parallel for num_threads(7)
+  for (int i = 0; i < patchesToMerge.size(); ++i) {
+    std::unordered_map<int, float> newFFRow;
+    compressedVoxels[i] = voxels[patchesToMerge[i][0]];
+    for (uint32_t idx : patchesToMerge[i]) {
+      const float square = squares[idx];
+      compressedSqaures[i] += square;
+      compressedColors[i] += colors[idx];
+      compressedEmission[i] += emission[idx];
+      compressedNormals[i] += normals[idx];
+      for (const auto &ffItem : ff[idx]) {
+        newFFRow[remapList[ffItem.first]] += ffItem.second * square;
+      }
+    }
+    compressedColors[i] /= patchesToMerge[i].size();
+    compressedEmission[i] /= patchesToMerge[i].size();
+    compressedNormals[i] /= patchesToMerge[i].size();
+    compressedNormals[i] = normalize(compressedNormals[i]);
+
+    compressedFF[i] = std::vector<std::pair<int, float>>(newFFRow.begin(), newFFRow.end());
+    const float invSumSquare = 1 / compressedSqaures[i];
+    for (auto& ffItem : compressedFF[i]) {
+      ffItem.second *= invSumSquare;
+    }
+    std::sort(compressedFF[i].begin(), compressedFF[i].end());
+  }
+
+  voxels = std::move(compressedVoxels);
+  colors = std::move(compressedColors);
+  emission = std::move(compressedEmission);
+  normals = std::move(compressedNormals);
+  squares = std::move(compressedSqaures);
+  ff = std::move(compressedFF);
+}
+
 void RD_FFIntegrator::EndScene() {
   const uint32_t trianglesCount = static_cast<uint32_t>(instanceTriangles.size());
+
+  {
+    std::wstringstream ss;
+    ss << L"ScenesData/" << sceneName << "/" << trianglesCount;
+    outputFolder = ss.str();
+    if (!std::filesystem::exists(outputFolder)) {
+      std::filesystem::create_directory(outputFolder);
+    }
+  }
+
+  struct Material
+  {
+    std::optional<float3> diffuse, emission;
+    std::optional<uint32_t> texRef;
+  };
+
+  std::vector<Material> mats;
+  for (const auto& materialColor : matColors) {
+    if (mats.size() <= materialColor.first) {
+      mats.resize(materialColor.first + 1);
+    }
+    mats[materialColor.first].diffuse = materialColor.second;
+  }
+  for (const auto& materialColor : matEmission) {
+    if (mats.size() <= materialColor.first) {
+      mats.resize(materialColor.first + 1);
+    }
+    mats[materialColor.first].emission = materialColor.second;
+  }
+  for (const auto tex : matTexture) {
+    if (mats.size() <= tex.first) {
+      mats.resize(tex.first + 1);
+    }
+    mats[tex.first].texRef = tex.second;
+  }
+
+  std::map<int, TexData> locTex = textures;
 
   std::vector<float3> colors, emission;
   for (uint32_t i = 0; i < trianglesCount; ++i) {
@@ -761,9 +882,7 @@ void RD_FFIntegrator::EndScene() {
     emission.push_back(matEmission[instanceTriangles[i].materialId]);
   }
 
-  std::stringstream ss;
-  ss << "Colors" << trianglesCount;
-  std::ofstream colorsOut(ss.str(), std::ios::binary | std::ios::out);
+  std::ofstream colorsOut(outputFolder + L"/Colors.bin", std::ios::binary | std::ios::out);
   colorsOut.write(reinterpret_cast<const char*>(&trianglesCount), sizeof(trianglesCount));
   for (uint32_t i = 0; i < trianglesCount; ++i) {
     colorsOut.write(reinterpret_cast<char*>(&colors[i]), sizeof(colors[i]));
@@ -771,134 +890,91 @@ void RD_FFIntegrator::EndScene() {
   colorsOut.close();
 
   std::vector<uint32_t> voxels(trianglesCount);
-  ss = std::stringstream();
-  ss << "VoxelIds" << trianglesCount;
-  std::ifstream voxelsOut(ss.str(), std::ios::binary | std::ios::in);
+  std::ifstream voxelsIn(outputFolder + L"/VoxelIds.bin", std::ios::binary | std::ios::in);
   uint32_t voxTriCount;
-  voxelsOut.read(reinterpret_cast<char*>(&voxTriCount), sizeof(voxTriCount));
+  uint3 gridSize;
+  voxelsIn.read(reinterpret_cast<char*>(&gridSize), sizeof(gridSize));
+  voxelsIn.read(reinterpret_cast<char*>(&voxTriCount), sizeof(voxTriCount));
   for (uint32_t i = 0; i < trianglesCount; ++i) {
-    voxelsOut.read(reinterpret_cast<char*>(&voxels[i]), sizeof(voxels[i]));
+    voxelsIn.read(reinterpret_cast<char*>(&voxels[i]), sizeof(voxels[i]));
   }
-  voxelsOut.close();
+  voxelsIn.close();
 
-  uint32_t maxVoxel = 0;
-  for (uint32_t i = 0; i < voxels.size(); ++i) {
-    maxVoxel = max(maxVoxel, voxels[i]);
+  std::vector<float> squares(trianglesCount);
+  for (int i = 0; i < trianglesCount; ++i) {
+    squares[i] = triangle_square(instanceTriangles[i]);
+  }
+
+  for (int i = squares.size() - 1; i >= 0; --i) {
+    if (squares[i] < 1e-9) {
+      squares.erase(squares.begin() + i);
+      instanceTriangles.erase(instanceTriangles.begin() + i);
+      colors.erase(colors.begin() + i);
+      voxels.erase(voxels.begin() + i);
+      emission.erase(emission.begin() + i);
+    }
   }
 
   std::cout << trianglesCount << " triangles" << std::endl;
-  ComputeFF(trianglesCount, instanceTriangles);
-
-  std::vector<uint32_t> mergedVoxels(colors.size());
-  ss = std::stringstream();
-  ss << "python ../../Dropbox/Diser/Experiments/clusterization.py " << colors.size();
-  std::string mergeScript = ss.str();
-  //FILE* in = _popen(mergeScript.c_str(), "r");
-  //for (int i = 0; i < colors.size(); ++i) {
-  //  fscanf_s(in, "%d", &mergedVoxels[i]);
-  //  maxVoxel = max(maxVoxel, mergedVoxels[i]);
-  //}
-  //_pclose(in);
-
-  //mergedVoxels.clear();
-  //for (uint32_t i = 0; i < colors.size(); ++i)
-  //  mergedVoxels.push_back(i);
-
-  //std::vector<float> squares(instanceTriangles.size());
-  //for (int i = 0; i < instanceTriangles.size(); ++i) {
-  //  squares[i] = 1;// triangle_square(instanceTriangles[i]);
-  //}
-
-  //maxVoxel = mergedVoxels.size();
-  std::vector<std::vector<uint32_t>> clusters;// = merge_triangles(mergedVoxels, colors, emission, squares, FF);
-  clusters.resize(colors.size());
-  for (uint32_t i = 0; i < clusters.size(); ++i) {
-    clusters[i].push_back(i);
-  }
-  std::vector<float3> randColors(maxVoxel + 1);
-  for (auto& col : randColors) {
-    col.x = (float)rand() / RAND_MAX;
-    col.y = (float)rand() / RAND_MAX;
-    col.z = (float)rand() / RAND_MAX;
-  }
-
-  //auto lighting = ComputeLightingClassic(emission, colors, clusters);
-  auto lighting = ComputeLightingRandom(emission, colors);
-  for (uint32_t i = 0; i < voxels.size(); ++i) {
-    //lighting[i] = randColors[mergedVoxels[i]];
-  }
-
-  auto triangles = instanceTriangles;
-
-  HRInitInfo initInfo;
-  initInfo.vbSize = 1024 * 1024 * 128;
-  hrSceneLibraryOpen(L"GI_res/scene.xml", HR_WRITE_DISCARD, initInfo);
-  HRSceneInstRef scene = hrSceneCreate(L"Scene");
-  hrSceneOpen(scene, HR_WRITE_DISCARD);
-
-  auto cam = hrCameraCreate(L"Camera1");
-  hrCameraOpen(cam, HR_WRITE_DISCARD);
-  auto proxyCamNode = hrCameraParamNode(cam);
-  for (auto it = camParams.begin(); it != camParams.end(); ++it) {
-    proxyCamNode.append_child(it->first.c_str()).text().set(it->second.c_str());
-  }
-  hrCameraClose(cam);
-
-  for (int i = 0; i < lighting.size(); ++i) {
-    std::wstringstream ss;
-    ss << "Mat" << i;
-    auto matRef = hrMaterialCreate(ss.str().c_str());
-    hrMaterialOpen(matRef, HR_WRITE_DISCARD);
-    auto material = hrMaterialParamNode(matRef);
-    auto diffuse = material.append_child();
-    diffuse.set_name(L"diffuse");
-    diffuse.append_attribute(L"brdf_type").set_value(L"lambert");
-    auto color = diffuse.append_child();
-    color.set_name(L"color");
-    ss = std::wstringstream();
-    ss << lighting[i].x << " " << lighting[i].y << ' ' << lighting[i].z;
-    color.append_attribute(L"val").set_value(ss.str().c_str());
-    hrMaterialClose(matRef);
-  }
-  std::vector<float4> points;
-  std::vector<float4> normals;
-  std::vector<float4> tangents;
-  std::vector<float2> texCoords;
-  std::vector<uint32_t> materials;
-  std::vector<uint32_t> indices;
-
-  for (int i = 0; i < lighting.size(); ++i) {
-    materials.push_back(i);
-    for (int j = 0; j < 3; ++j) {
-      indices.push_back(static_cast<int>(indices.size()));
+  ComputeFF(instanceTriangles.size(), instanceTriangles, squares);
+  float3 bmin = float3(1e9, 1e9, 1e9);
+  float3 bmax = float3(-1e9, -1e9, -1e9);
+  for (uint32_t i = 0; i < instanceTriangles.size(); ++i) {
+    for (uint32_t j = 0; j < instanceTriangles[i].points.size(); ++j) {
+      bmin.x = min(instanceTriangles[i].points[j].x, bmin.x);
+      bmin.y = min(instanceTriangles[i].points[j].y, bmin.y);
+      bmin.z = min(instanceTriangles[i].points[j].z, bmin.z);
+      bmax.x = max(instanceTriangles[i].points[j].x, bmax.x);
+      bmax.y = max(instanceTriangles[i].points[j].y, bmax.y);
+      bmax.z = max(instanceTriangles[i].points[j].z, bmax.z);
     }
-    points.insert(points.end(), triangles[i].points.begin(), triangles[i].points.end());
-    normals.insert(normals.end(), triangles[i].normal.value().begin(), triangles[i].normal.value().end());
-    tangents.insert(tangents.end(), triangles[i].tangent.value().begin(), triangles[i].tangent.value().end());
-    texCoords.insert(texCoords.end(), triangles[i].texCoords.begin(), triangles[i].texCoords.end());
   }
-  
-  auto mesh = hrMeshCreate(L"Whole scene");
-  hrMeshOpen(mesh, HR_TRIANGLE_IND12, HR_WRITE_DISCARD);
-  hrMeshPrimitiveAttribPointer1i(mesh, L"mind", reinterpret_cast<int*>(materials.data()));
-  hrMeshVertexAttribPointer4f(mesh, L"positions", reinterpret_cast<float*>(points.data()));
-  hrMeshVertexAttribPointer4f(mesh, L"normals", reinterpret_cast<float*>(normals.data()));
-  hrMeshVertexAttribPointer4f(mesh, L"tangent", reinterpret_cast<float*>(tangents.data()));
-  hrMeshVertexAttribPointer2f(mesh, L"texcoord", reinterpret_cast<float*>(texCoords.data()));
-  hrMeshAppendTriangles3(mesh, static_cast<int>(indices.size()), reinterpret_cast<int*>(indices.data()));
-  hrMeshClose(mesh);
 
-  std::array<float, 16> matrix = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-  hrMeshInstance(scene, mesh, matrix.data());
+  std::vector<float3> normals(instanceTriangles.size());
+  for (uint32_t i = 0; i < normals.size(); ++i) {
+    normals[i] = to_float3(instanceTriangles[i].normal.value()[0]);
+  }
 
-  hrSceneClose(scene);
-  hrFlush(scene);// , render, cam);
+  merge_ff(voxels, colors, emission, normals, squares, FF);
+
+  auto lighting = ComputeLightingClassic(emission, colors);
+  //auto lighting = ComputeLightingRandom(emission, colors);
+  const uint32_t PATCHES_IN_VOXEL = 4;
+  std::vector<std::array<float3, PATCHES_IN_VOXEL>> voxelsGridColors(gridSize.x * gridSize.y * gridSize.z);
+  std::vector<std::array<float, PATCHES_IN_VOXEL>> inVoxelSquares(gridSize.x* gridSize.y* gridSize.z);
+
+  for (uint32_t i = 0; i < lighting.size(); ++i) {
+    const uint32_t voxelId = voxels[i];
+    float square = squares[i];
+    float3 light = lighting[i];
+    for (uint32_t j = 0; j < PATCHES_IN_VOXEL; ++j) {
+      if (square > inVoxelSquares[voxelId][j]) {
+        std::swap(square, inVoxelSquares[voxelId][j]);
+        std::swap(light, voxelsGridColors[voxelId][j]);
+      }
+    }
+  }
+  for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
+    for (uint32_t j = 1; j < PATCHES_IN_VOXEL; ++j) {
+      if (inVoxelSquares[i][j] < 1e-9f) {
+        voxelsGridColors[i][j] = voxelsGridColors[i][0];
+      }
+    }
+  }
+  std::ofstream VoxelGridLightingOut(outputFolder + L"/VoxelGridLighting.bin", std::ios::binary | std::ios::out);
+  VoxelGridLightingOut.write(reinterpret_cast<const char*>(&gridSize), sizeof(gridSize));
+  VoxelGridLightingOut.write(reinterpret_cast<const char*>(&bmin), sizeof(bmin));
+  VoxelGridLightingOut.write(reinterpret_cast<const char*>(&bmax), sizeof(bmax));
+  for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
+    VoxelGridLightingOut.write(reinterpret_cast<char*>(&voxelsGridColors[i]), sizeof(voxelsGridColors[i]));
+  }
+  VoxelGridLightingOut.close();
 }
 
 using DrawFuncType = void (*)();
 using InitFuncType = void (*)();
 
-void window_main_ff_integrator(const wchar_t* a_libPath, const wchar_t* a_renderName, bool recomputeFF, bool no_interpolation) {
+void window_main_ff_integrator(const std::wstring& a_libPath, const std::wstring& scene_name, bool recomputeFF, bool no_interpolation) {
   recompute_ff = recomputeFF;
   noInterpolation = no_interpolation;
   hrErrorCallerPlace(L"Init");
@@ -906,7 +982,8 @@ void window_main_ff_integrator(const wchar_t* a_libPath, const wchar_t* a_render
   HRInitInfo initInfo;
   initInfo.vbSize = 1024 * 1024 * 128;
   initInfo.sortMaterialIndices = false;
-  hrSceneLibraryOpen(a_libPath, HR_OPEN_EXISTING, initInfo);
+  hrSceneLibraryOpen(a_libPath.c_str(), HR_OPEN_EXISTING, initInfo);
+  sceneName = scene_name;
 
   HRSceneLibraryInfo scnInfo = hrSceneLibraryInfo();
 
@@ -938,11 +1015,12 @@ void window_main_ff_integrator(const wchar_t* a_libPath, const wchar_t* a_render
   }
   hrCameraClose(camRef);
 
-  renderRef = hrRenderCreate(a_renderName);
+  renderRef = hrRenderCreate(L"ff_integrator");
 
   auto pList = hrRenderGetDeviceList(renderRef);
 
   hrRenderEnableDevice(renderRef, 0, true);
 
   hrCommit(scnRef, renderRef);
+  hrSceneLibraryClose();
 }

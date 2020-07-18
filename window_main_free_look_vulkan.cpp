@@ -30,6 +30,7 @@ int   g_height = 1024;
 int   g_ssao = 1;
 int   g_lightgeo = 0;
 static int g_filling = 0;
+std::wstring sceneName;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -339,10 +340,11 @@ void OnError(int errorCode, const char* msg)
 using DrawFuncType = void (*)();
 using InitFuncType = void (*)();
 
-void window_main_free_look_vulkan(const wchar_t* a_libPath, const wchar_t* a_renderName, InitFuncType a_pInitFunc, DrawFuncType a_pDrawFunc)
+void window_main_free_look_vulkan(const std::wstring& a_libPath, const std::wstring& scene_name, InitFuncType a_pInitFunc, DrawFuncType a_pDrawFunc)
 {
   g_input.inputLibraryPath = a_libPath;
-  g_input.inputRenderName = a_renderName;
+  g_input.inputRenderName = L"vulkan";
+  sceneName = scene_name;
 
   glfwInit();
 
@@ -390,6 +392,7 @@ void window_main_free_look_vulkan(const wchar_t* a_libPath, const wchar_t* a_ren
     Init();
 
   uint64_t frameId = 0;
+
 
   // Main loop
   //
