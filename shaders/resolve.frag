@@ -87,10 +87,28 @@ vec3 sampleLighting(vec3 worldPos) {
     lighting[i].z = dot(lightingBuffer[3 * flatIndices[i] + 2], vec4(0.25, 0.25, 0.25, 0.25));
   }
   for (uint i = 0; i < 8; i += 2) {
+    if (lighting[i] == vec3(0, 0, 0)) {
+      lighting[i] = lighting[i + 1];
+    }
+    else if (lighting[i + 1] == vec3(0, 0, 0)) {
+      lighting[i + 1] = lighting[i];
+    }
     lighting[i] = mix(lighting[i], lighting[i + 1], vec3(lerps.x));
   }
   for (uint i = 0; i < 8; i += 4) {
+    if (lighting[i] == vec3(0, 0, 0)) {
+      lighting[i] = lighting[i + 2];
+    }
+    else if (lighting[i + 2] == vec3(0, 0, 0)) {
+      lighting[i + 2] = lighting[i];
+    }
     lighting[i] = mix(lighting[i], lighting[i + 2], vec3(lerps.y));
+  }
+  if (lighting[0] == vec3(0, 0, 0)) {
+    lighting[0] = lighting[4];
+  }
+  else if (lighting[4] == vec3(0, 0, 0)) {
+    lighting[4] = lighting[0];
   }
   return mix(lighting[0], lighting[4], vec3(lerps.z));
 }
