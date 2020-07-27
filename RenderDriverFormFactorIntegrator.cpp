@@ -15,6 +15,7 @@
 #include <LiteMath.h>
 
 #include "RenderDriverFormFactorIntegrator.h"
+#include "dataConfig.h"
 
 using namespace HydraLiteMath;
 
@@ -22,9 +23,6 @@ static HRRenderRef  renderRef;
 static HRCameraRef  camRef;
 static HRSceneInstRef scnRef;
 static std::unordered_map<std::wstring, std::wstring> camParams;
-static bool recompute_ff = false;
-static std::wstring sceneName;
-static std::wstring outputFolder;
 
 IHRRenderDriver* CreateFFIntegrator_RenderDriver()
 {
@@ -428,27 +426,33 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
 {
   FF.resize(quadsCount);
 
-  std::wstring ffFilename = outputFolder + L"/FF.bin";
+  std::wstring ffFilename = DataConfig::get().getBinFilePath(L"FF.bin");
   std::ifstream fin(ffFilename, std::ios::binary);
-  if (!recompute_ff && fin.is_open()) {
+  if (fin.is_open()) {
     uint32_t countFromFile = 0;
-    fin.read(reinterpret_cast<char*>(&countFromFile), sizeof(countFromFile));
-    assert(countFromFile == quadsCount);
-    for (uint32_t i = 0; i < quadsCount; ++i) {
-      uint32_t rowSize;
-      fin.read(reinterpret_cast<char*>(&rowSize), sizeof(rowSize));
-      FF[i].resize(rowSize);
-      for (uint32_t j = 0; j < rowSize; ++j) {
-        uint32_t idx;
-        float value;
-        fin.read(reinterpret_cast<char*>(&idx), sizeof(idx));
-        fin.read(reinterpret_cast<char*>(&value), sizeof(value));
-        FF[i][j].first = idx;
-        FF[i][j].second = value;
+    uint32_t ffVersion = 0;
+    fin.read(reinterpret_cast<char*>(&ffVersion), sizeof(ffVersion));
+    if (ffVersion == DataConfig::FF_VERSION) {
+      fin.read(reinterpret_cast<char*>(&countFromFile), sizeof(countFromFile));
+      assert(countFromFile == quadsCount);
+      for (uint32_t i = 0; i < quadsCount; ++i) {
+        uint32_t rowSize;
+        fin.read(reinterpret_cast<char*>(&rowSize), sizeof(rowSize));
+        FF[i].resize(rowSize);
+        for (uint32_t j = 0; j < rowSize; ++j) {
+          uint32_t idx;
+          float value;
+          fin.read(reinterpret_cast<char*>(&idx), sizeof(idx));
+          fin.read(reinterpret_cast<char*>(&value), sizeof(value));
+          FF[i][j].first = idx;
+          FF[i][j].second = value;
+        }
       }
+      fin.close();
+      return;
+    } else {
+      fin.close();
     }
-    fin.close();
-    return;
   }
   std::ofstream fout(ffFilename, std::ios::binary);
 
@@ -529,6 +533,7 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
     std::sort(FF[i].begin(), FF[i].end());
   }
 
+  fout.write(reinterpret_cast<const char*>(&DataConfig::FF_VERSION), sizeof(DataConfig::FF_VERSION));
   fout.write(reinterpret_cast<const char*>(&quadsCount), sizeof(quadsCount));
   for (uint32_t i = 0; i < quadsCount; ++i) {
     uint32_t rowSize = static_cast<uint32_t>(FF[i].size());
@@ -750,7 +755,6 @@ std::vector<std::vector<uint32_t>> merge_triangles(
 }
 
 static int tessFactor;
-static bool noInterpolation;
 
 bool RD_FFIntegrator::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, const void* a_data, pugi::xml_node a_texNode) {
   textures[a_texId].w = w;
@@ -863,15 +867,6 @@ static float2 getAnglesForNormal(const float3& normal) {
 void RD_FFIntegrator::EndScene() {
   const uint32_t trianglesCount = static_cast<uint32_t>(instanceTriangles.size());
 
-  {
-    std::wstringstream ss;
-    ss << L"ScenesData/" << sceneName << "/" << trianglesCount;
-    outputFolder = ss.str();
-    if (!std::filesystem::exists(outputFolder)) {
-      std::filesystem::create_directory(outputFolder);
-    }
-  }
-
   struct Material
   {
     std::optional<float3> diffuse, emission;
@@ -906,7 +901,7 @@ void RD_FFIntegrator::EndScene() {
     emission.push_back(matEmission[instanceTriangles[i].materialId]);
   }
 
-  std::ofstream colorsOut(outputFolder + L"/Colors.bin", std::ios::binary | std::ios::out);
+  std::ofstream colorsOut(DataConfig::get().getBinFilePath(L"Colors.bin"), std::ios::binary | std::ios::out);
   colorsOut.write(reinterpret_cast<const char*>(&trianglesCount), sizeof(trianglesCount));
   for (uint32_t i = 0; i < trianglesCount; ++i) {
     colorsOut.write(reinterpret_cast<char*>(&colors[i]), sizeof(colors[i]));
@@ -914,7 +909,7 @@ void RD_FFIntegrator::EndScene() {
   colorsOut.close();
 
   std::vector<uint32_t> voxels(trianglesCount);
-  std::ifstream voxelsIn(outputFolder + L"/VoxelIds.bin", std::ios::binary | std::ios::in);
+  std::ifstream voxelsIn(DataConfig::get().getBinFilePath(L"VoxelIds.bin"), std::ios::binary | std::ios::in);
   uint32_t voxTriCount;
   uint3 gridSize;
   voxelsIn.read(reinterpret_cast<char*>(&gridSize), sizeof(gridSize));
@@ -985,7 +980,7 @@ void RD_FFIntegrator::EndScene() {
       }
     }
   }
-  std::ofstream VoxelGridLightingOut(outputFolder + L"/VoxelGridLighting.bin", std::ios::binary | std::ios::out);
+  std::ofstream VoxelGridLightingOut(DataConfig::get().getBinFilePath(L"VoxelGridLighting.bin"), std::ios::binary | std::ios::out);
   VoxelGridLightingOut.write(reinterpret_cast<const char*>(&gridSize), sizeof(gridSize));
   VoxelGridLightingOut.write(reinterpret_cast<const char*>(&bmin), sizeof(bmin));
   VoxelGridLightingOut.write(reinterpret_cast<const char*>(&bmax), sizeof(bmax));
@@ -998,16 +993,13 @@ void RD_FFIntegrator::EndScene() {
 using DrawFuncType = void (*)();
 using InitFuncType = void (*)();
 
-void window_main_ff_integrator(const std::wstring& a_libPath, const std::wstring& scene_name, bool recomputeFF, bool no_interpolation) {
-  recompute_ff = recomputeFF;
-  noInterpolation = no_interpolation;
+void window_main_ff_integrator(const std::wstring& a_libPath, const std::wstring& scene_name) {
   hrErrorCallerPlace(L"Init");
 
   HRInitInfo initInfo;
   initInfo.vbSize = 1024 * 1024 * 128;
   initInfo.sortMaterialIndices = false;
   hrSceneLibraryOpen(a_libPath.c_str(), HR_OPEN_EXISTING, initInfo);
-  sceneName = scene_name;
 
   HRSceneLibraryInfo scnInfo = hrSceneLibraryInfo();
 

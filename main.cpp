@@ -26,6 +26,8 @@ IHRRenderDriver* CreateDriverRTE(const wchar_t* a_cfg) { return nullptr; }
 #else
 #endif
 
+#include "dataConfig.h"
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////// GLFW
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////// GLFW
 
@@ -42,7 +44,7 @@ void window_main_free_look(const wchar_t* a_libPath, const wchar_t* a_renderName
 void window_main_free_look_vulkan(const std::wstring& a_libPath, const std::wstring& scene_name,
                            InitFuncType a_pInitFunc = nullptr, DrawFuncType a_pDrawFunc = nullptr);
 
-void window_main_ff_integrator(const std::wstring& a_libPath, const std::wstring& scene_name, bool recomputeFF, bool noInterpolation);
+void window_main_ff_integrator(const std::wstring& a_libPath, const std::wstring& scene_name);
 void window_main_voxel_tessellator(const std::wstring& a_libPath, const std::wstring& scene_name, float voxel_size);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////// GLFW
@@ -146,16 +148,14 @@ int main(int argc, const char** argv)
   
   std::cout << "sizeof(size_t) = " << sizeof(size_t) <<std::endl;
 
-  bool recomputeFF = false;
-  bool noInterpolation = false;
   float voxelSize = 0.5 / 8;
   for (int i = 1; i < argc; ++i) {
-    recomputeFF |= strcmp(argv[i], "-recomputeFF") == 0;
-    noInterpolation |= strcmp(argv[i], "-noInterpolation") == 0;
     if (strcmp(argv[i], "-voxelSize") == 0 && i + 1 < argc) {
       voxelSize = std::stof(argv[i + 1]);
     }
   }
+
+  const uint32_t scaledVoxelSize = static_cast<uint32_t>(voxelSize * 10000);
 
   //window_main_ff_integrator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
   //window_main_ff_integrator(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
@@ -173,8 +173,9 @@ int main(int argc, const char** argv)
   //const std::wstring scene = L"SimpleInterior_5K"; // 0.5 / 2
   //const std::wstring scene = L"05_Sponza";
   //const std::wstring scene = L"test_42"; // 0.5
+  DataConfig::get().init(scene, scaledVoxelSize);
   window_main_voxel_tessellator(L"../Diser/DiffuseReference/", scene, voxelSize);
-  window_main_ff_integrator(L"Tessellated", scene, recomputeFF, noInterpolation);
+  window_main_ff_integrator(L"Tessellated", scene);
   window_main_free_look_vulkan(L"Tessellated", scene);
   //window_main_free_look_vulkan(L"GI_res", scene);
   //window_main_free_look_vulkan(L"Tessellated", L"vulkan");

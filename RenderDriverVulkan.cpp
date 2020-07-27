@@ -13,6 +13,7 @@
 
 #include "RenderDriverVulkan.h"
 #include "LiteMath.h"
+#include "dataConfig.h"
 using namespace HydraLiteMath;
 
 #define GLFW_INCLUDE_VULKAN
@@ -102,7 +103,7 @@ RD_Vulkan::QueueFamilyIndices RD_Vulkan::GetQueueFamilyIndex()
   vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies.data());
 
   // Now find a family that supports compute.
-  size_t i = 0;
+  uint32_t i = 0;
   for (; i < queueFamilies.size(); ++i)
   {
     VkQueueFamilyProperties props = queueFamilies[i];
@@ -248,7 +249,7 @@ void RD_Vulkan::createGbufferRenderPass()
 
   VkSubpassDescription subpass = {};
   subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-  subpass.colorAttachmentCount = colorAttachments.size();
+  subpass.colorAttachmentCount = static_cast<uint32_t>(colorAttachments.size());
   subpass.pColorAttachments = colorAttachments.data();
   subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
@@ -447,7 +448,7 @@ VkPipeline RD_Vulkan::createGraphicsPipeline(const PipelineConfig& config, VkPip
   colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
   colorBlending.logicOpEnable = VK_FALSE;
   colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
-  colorBlending.attachmentCount = blendStates.size();
+  colorBlending.attachmentCount = static_cast<uint32_t>(blendStates.size());
   colorBlending.pAttachments = blendStates.data();
   colorBlending.blendConstants[0] = 0.0f; // Optional
   colorBlending.blendConstants[1] = 0.0f; // Optional
@@ -468,7 +469,7 @@ VkPipeline RD_Vulkan::createGraphicsPipeline(const PipelineConfig& config, VkPip
   pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   pipelineLayoutCreateInfo.setLayoutCount = 1;
   pipelineLayoutCreateInfo.pSetLayouts = &config.descriptorSetLayout;
-  pipelineLayoutCreateInfo.pushConstantRangeCount = config.pushConstants.size();
+  pipelineLayoutCreateInfo.pushConstantRangeCount = static_cast<uint32_t>(config.pushConstants.size());
   pipelineLayoutCreateInfo.pPushConstantRanges = config.pushConstants.data();
 
   VkPipelineDepthStencilStateCreateInfo depthStencil = {};
@@ -721,8 +722,6 @@ int32_t findProperties(const VkPhysicalDeviceMemoryProperties* pMemoryProperties
 }
 
 extern GLFWwindow* g_window;
-extern std::wstring sceneName;
-static std::wstring dataFolder;
 static uint32_t trianglesCount;
 
 bool checkValidationLayerSupport() {
@@ -1472,7 +1471,7 @@ void RD_Vulkan::createDescriptorSets() {
     descriptorWrites[0].dstBinding = 0;
     descriptorWrites[0].dstArrayElement = 0;
     descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    descriptorWrites[0].descriptorCount = buffersInfo.size();
+    descriptorWrites[0].descriptorCount = static_cast<uint32_t>(buffersInfo.size());
     descriptorWrites[0].pBufferInfo = buffersInfo.data();
 
     descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1507,7 +1506,7 @@ void RD_Vulkan::createDescriptorSets() {
     descriptorWrites[2].dstBinding = 3;
     descriptorWrites[2].dstArrayElement = 0;
     descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    descriptorWrites[2].descriptorCount = imagesInfo.size();
+    descriptorWrites[2].descriptorCount = static_cast<uint32_t>(imagesInfo.size());
     descriptorWrites[2].pImageInfo = imagesInfo.data();
 
     vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
@@ -1629,18 +1628,8 @@ VkFormat RD_Vulkan::findDepthFormat() {
 }
 
 void RD_Vulkan::createLightingBuffer() {
-  {
-    std::wstringstream ss;
-    trianglesCount = 3194;//HotFix;
-    ss << L"ScenesData/" << sceneName << "/" << trianglesCount;
-    dataFolder = ss.str();
-    if (!std::filesystem::exists(dataFolder)) {
-      std::filesystem::create_directory(dataFolder);
-    }
-  }
-
   uint3 voxelGridSize;
-  std::ifstream VoxelGridLightingIn(dataFolder + L"/VoxelGridLighting.bin", std::ios::binary | std::ios::in);
+  std::ifstream VoxelGridLightingIn(DataConfig::get().getBinFilePath(L"VoxelGridLighting.bin"), std::ios::binary | std::ios::in);
   VoxelGridLightingIn.read(reinterpret_cast<char*>(&voxelGridSize), sizeof(voxelGridSize));
   gridSize.x = voxelGridSize.x;
   gridSize.y = voxelGridSize.y;
@@ -1894,8 +1883,8 @@ bool RD_Vulkan::UpdateLight(int32_t a_lightIdId, pugi::xml_node a_lightNode)
     directLightLib[a_lightIdId] = newTemplate;
   } else {
     std::wstring type = lightType.as_string();
-    std::string castedType(type.begin(), type.end());
-    std::cout << "Light " << a_lightIdId << " not processed. Light type: " << castedType << std::endl;
+    //std::string castedType(type.begin(), type.end());
+    //std::cout << "Light " << a_lightIdId << " not processed. Light type: " << castedType << std::endl;
   }
   return true;
 }
@@ -2016,7 +2005,7 @@ bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HR
   }
 
   vertices.insert(vertices.end(), meshVertices.begin(), meshVertices.end());
-  const uint32_t indicesOffset = indices.size();
+  const uint32_t indicesOffset = static_cast<uint32_t>(indices.size());
   indices.resize(indicesOffset + meshIndices.size());
   std::transform(meshIndices.begin(), meshIndices.end(), indices.begin() + indicesOffset, [indicesOffset](const uint32_t idx) { return idx + indicesOffset; });
 
@@ -2108,7 +2097,7 @@ void RD_Vulkan::EndScene()
   VkDescriptorSetAllocateInfo allocInfo = {};
   allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
   allocInfo.descriptorPool = gbufferDescriptorPool;
-  allocInfo.descriptorSetCount = layouts.size();
+  allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size());
   allocInfo.pSetLayouts = layouts.data();
   VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, materialsLib.data()));
   for (uint32_t i = 0; i < materials.size(); ++i) {
@@ -2124,7 +2113,7 @@ void RD_Vulkan::EndScene()
     descriptorWrites[0].dstBinding = 0;
     descriptorWrites[0].dstArrayElement = 0;
     descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    descriptorWrites[0].descriptorCount = buffersInfo.size();
+    descriptorWrites[0].descriptorCount = static_cast<uint32_t>(buffersInfo.size());
     descriptorWrites[0].pBufferInfo = buffersInfo.data();
 
     Texture* tex = (materials[i].textureIdx == -1 ? defaultTexture : textures[materials[i].textureIdx]).get();
@@ -2249,7 +2238,7 @@ void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32
   StaticModelInstances modelInstance;
   for (auto mesh : modelsLib[a_mesh_id].meshes) {
     StaticMeshInstances meshInst;
-    meshInst.matricesOffset = matrices.size();
+    meshInst.matricesOffset = static_cast<uint32_t>(matrices.size());
     meshInst.matricesCount = a_instNum;
     meshInst.mesh = mesh;
     if (a_remapId[0] != -1) {
@@ -2277,7 +2266,7 @@ void RD_Vulkan::InstanceLights(int32_t a_light_id, const float* a_matrix, pugi::
 
   int lightId = a_custAttrArray->attribute(L"light_id").as_int();
   if (directLightLib.count(lightId)) {
-    for (uint32_t i = 0; i < a_instNum; ++i) {
+    for (int32_t i = 0; i < a_instNum; ++i) {
       DirectLight lightToAdd;
       lightToAdd.color = directLightLib[lightId].color;
       lightToAdd.innerRadius = directLightLib[lightId].innerRadius;

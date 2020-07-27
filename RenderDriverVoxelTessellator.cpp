@@ -11,6 +11,7 @@
 #include <LiteMath.h>
 
 #include "RenderDriverVoxelTessellator.h"
+#include "dataConfig.h"
 
 using namespace HydraLiteMath;
 
@@ -244,7 +245,6 @@ T lerpSquare(T p1, T p2, T p3, T p4, float x, float y) {
 }
 
 static float voxelSize;
-static std::wstring sceneName;
 
 
 struct Vertex
@@ -649,17 +649,7 @@ void RD_VoxelTessellator::EndScene() {
     hrMaterialClose(matRef);
   }
 
-  std::wstring outputFolder;
-  {
-    std::wstringstream ss;
-    ss << L"ScenesData/" << sceneName << "/" << triangles.voxelIds.size();
-    outputFolder = ss.str();
-    if (!std::filesystem::exists(outputFolder)) {
-      std::filesystem::create_directory(outputFolder);
-    }
-  }
-
-  std::ofstream fout(outputFolder + L"/VoxelIds.bin", std::ios::binary);
+  std::ofstream fout(DataConfig::get().getBinFilePath(L"VoxelIds.bin"), std::ios::binary);
   //std::unordered_map<uint32_t, uint32_t> voxelsRemap;
   //for (uint32_t i = 0; i < triangles.voxelIds.size(); ++i) {
   //  if (voxelsRemap.find(triangles.voxelIds[i]) != voxelsRemap.end()) {
@@ -730,15 +720,6 @@ void window_main_voxel_tessellator(const std::wstring& a_libPath, const std::wst
   initInfo.vbSize = 1024 * 1024 * 128;
   initInfo.sortMaterialIndices = false;
   const std::wstring scenePath = a_libPath + scene_name + L"/scenelib";
-  const std::wstring scenesFolder = L"ScenesData/";
-  if (!std::filesystem::exists(scenesFolder)) {
-    std::filesystem::create_directory(scenesFolder);
-  }
-  const std::wstring resultFolder = scenesFolder + scene_name;
-  sceneName = scene_name;
-  if (!std::filesystem::exists(resultFolder)) {
-    std::filesystem::create_directory(resultFolder);
-  }
   hrSceneLibraryOpen(scenePath.c_str(), HR_OPEN_EXISTING, initInfo);
 
   HRSceneLibraryInfo scnInfo = hrSceneLibraryInfo();
