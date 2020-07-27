@@ -357,7 +357,7 @@ void window_main_free_look_vulkan(const std::wstring& a_libPath, const std::wstr
   uint32_t extentionsCount = 0;
   const char** extentions = glfwGetRequiredInstanceExtensions(&extentionsCount);
   std::cout << "Required extentions:" << std::endl;
-  for (int i = 0; i < extentionsCount; ++i)
+  for (uint32_t i = 0; i < extentionsCount; ++i)
   {
     std::cout << extentions[i] << std::endl;
   }

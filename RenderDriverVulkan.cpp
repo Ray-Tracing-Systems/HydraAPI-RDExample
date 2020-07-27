@@ -1663,7 +1663,7 @@ void RD_Vulkan::createLightingBuffer() {
   }
   VoxelGridLightingIn.close();
 
-  lightingBufferSize = sizeof(voxelsGridColors[0]) * voxelsGridColors.size();
+  lightingBufferSize = static_cast<uint32_t>(sizeof(voxelsGridColors[0]) * voxelsGridColors.size());
   VkDeviceSize bufferSize = lightingBufferSize;
 
   VkBuffer stagingBuffer;

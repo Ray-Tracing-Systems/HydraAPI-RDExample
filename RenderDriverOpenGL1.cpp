@@ -31,7 +31,7 @@ void RD_OGL1_Plain::ClearAll()
     glDeleteLists(m_displayLists, m_listNum);
 
   if(!m_texturesList.empty())
-    glDeleteTextures(m_texturesList.size(), m_texturesList.data());
+    glDeleteTextures(static_cast<GLsizei>(m_texturesList.size()), m_texturesList.data());
   
   m_displayLists = -1;
   m_listNum      = 0;
