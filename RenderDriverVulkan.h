@@ -80,8 +80,8 @@ struct RD_Vulkan : public IHRRenderDriver
   bool UpdateLight(int32_t a_lightIdId, pugi::xml_node a_lightNode) override;
   bool UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HRMeshDriverInput& a_input, const HRBatchInfo* a_batchList, int32_t listSize) override;
        
-  bool UpdateImageFromFile(int32_t a_texId, const wchar_t* a_fileName, pugi::xml_node a_texNode) override { return false; }
-  bool UpdateMeshFromFile(int32_t a_meshId, pugi::xml_node a_meshNode, const wchar_t* a_fileName) override { return false; }
+  bool UpdateImageFromFile(int32_t, const wchar_t*, pugi::xml_node) override { return false; }
+  bool UpdateMeshFromFile(int32_t, pugi::xml_node, const wchar_t*) override { return false; }
 
        
   bool UpdateCamera(pugi::xml_node a_camNode) override;
@@ -101,10 +101,10 @@ struct RD_Vulkan : public IHRRenderDriver
   void GetFrameBufferHDR(int32_t w, int32_t h, float*   a_out, const wchar_t* a_layerName) override;
   void GetFrameBufferLDR(int32_t w, int32_t h, int32_t* a_out) override;
 
-  void GetGBufferLine(int32_t a_lineNumber, HRGBufferPixel* a_lineData, int32_t a_startX, int32_t a_endX, const std::unordered_set<int32_t>& a_shadowCatchers) override {}
+  void GetGBufferLine(int32_t, HRGBufferPixel*, int32_t, int32_t, const std::unordered_set<int32_t>&) override {}
 
   const HRRenderDeviceInfoListElem* DeviceList() const override { return nullptr; } //#TODO: implement quering GPU info bu glGetString(GL_VENDOR) and e.t.c.
-  bool EnableDevice(int32_t id, bool a_enable) override { return true; }
+  bool EnableDevice(int32_t, bool) override { return true; }
 
 protected:
   struct QueueFamilyIndices {

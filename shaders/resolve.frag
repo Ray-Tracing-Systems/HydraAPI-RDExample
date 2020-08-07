@@ -143,4 +143,5 @@ void main() {
   } else {
     outColor.rgb = diffuse * (ComputeLighting(unproj.xyz, normal, lights.directLights[0]) + sampleLighting(unproj.xyz, normal));
   }
+  outColor.rgb = pow(outColor.rgb, vec3(1.0 / 2.2));
 }

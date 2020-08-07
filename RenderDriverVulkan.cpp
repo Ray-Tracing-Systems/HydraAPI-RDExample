@@ -1773,6 +1773,9 @@ RD_Vulkan::~RD_Vulkan()
   vkDestroyBuffer(device, lightingBuffer, nullptr);
   vkFreeMemory(device, lightingMemory, nullptr);
 
+  vkDestroyBuffer(device, lightingWeightsBuffer, nullptr);
+  vkFreeMemory(device, lightingWeightsMemory, nullptr);
+
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
     vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
@@ -1818,7 +1821,7 @@ HRDriverAllocInfo RD_Vulkan::AllocAll(HRDriverAllocInfo a_info)
 //
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool RD_Vulkan::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, const void* a_data, pugi::xml_node a_texNode)
+bool RD_Vulkan::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, const void* a_data, pugi::xml_node)
 {
   if (a_data == nullptr) 
     return false; 
@@ -2007,7 +2010,7 @@ bool RD_Vulkan::UpdateSettings(pugi::xml_node a_settingsNode)
 }
 
 
-bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HRMeshDriverInput& a_input, const HRBatchInfo* a_batchList, int32_t a_listSize)
+bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node, const HRMeshDriverInput& a_input, const HRBatchInfo*, int32_t)
 {
   if (inited) {
     return true;
@@ -2017,8 +2020,6 @@ bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HR
     return true;
   }
   trianglesCount = a_input.triNum;
-
-  bool invalidMaterial = m_diffTexId.empty();
 
   std::vector<uint32_t> begins(1, 0);
   for (int i = 1; i < a_input.triNum; ++i) {
@@ -2237,7 +2238,7 @@ void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
   vkMapMemory(device, resolveConstantsMemory, 0, sizeof(float4) * (4 + 3), 0, &data);
   memcpy(data, viewVecsData.data(), sizeof(viewVecsData));
   data = reinterpret_cast<uint8_t*>(data) + sizeof(viewVecsData);
-  memcpy(data, viewVecsData.data(), sizeof(bmin));
+  memcpy(data, &bmin, sizeof(bmin));
   data = reinterpret_cast<uint8_t*>(data) + sizeof(bmin);
   memcpy(data, &bmax, sizeof(bmax));
   data = reinterpret_cast<uint8_t*>(data) + sizeof(bmax);
@@ -2256,7 +2257,7 @@ static inline void mat4x4_transpose(float M[16], const float N[16])
   }
 }
 
-void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32_t a_instNum, const int* a_lightInstId, const int* a_remapId, const int* a_realInstId)
+void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32_t a_instNum, const int*, const int* a_remapId, const int*)
 {
   if (inited) {
     return;
@@ -2292,7 +2293,7 @@ void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32
 }
 
 
-void RD_Vulkan::InstanceLights(int32_t a_light_id, const float* a_matrix, pugi::xml_node* a_custAttrArray, int32_t a_instNum, int32_t a_lightGroupId)
+void RD_Vulkan::InstanceLights(int32_t, const float* a_matrix, pugi::xml_node* a_custAttrArray, int32_t a_instNum, int32_t)
 {
   if (inited) {
     return;
@@ -2314,7 +2315,7 @@ void RD_Vulkan::InstanceLights(int32_t a_light_id, const float* a_matrix, pugi::
   }
 }
 
-HRRenderUpdateInfo RD_Vulkan::HaveUpdateNow(int a_maxRaysPerPixel)
+HRRenderUpdateInfo RD_Vulkan::HaveUpdateNow(int)
 {
   HRRenderUpdateInfo res;
   res.finalUpdate   = true;
@@ -2324,11 +2325,11 @@ HRRenderUpdateInfo RD_Vulkan::HaveUpdateNow(int a_maxRaysPerPixel)
 }
 
 
-void RD_Vulkan::GetFrameBufferHDR(int32_t w, int32_t h, float*   a_out, const wchar_t* a_layerName)
+void RD_Vulkan::GetFrameBufferHDR(int32_t, int32_t, float*, const wchar_t*)
 {
 
 }
 
-void RD_Vulkan::GetFrameBufferLDR(int32_t w, int32_t h, int32_t* a_out)
+void RD_Vulkan::GetFrameBufferLDR(int32_t, int32_t, int32_t*)
 {
 }

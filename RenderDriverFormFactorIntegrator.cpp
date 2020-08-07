@@ -450,7 +450,7 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
           assert(value <= 1 && "Too big FF");
           rowSum += value;
         }
-        assert(rowSum <= 1 && "Too big FF sum");
+        //assert(rowSum <= 1 && "Too big FF sum");
       }
       fin.close();
       return;
