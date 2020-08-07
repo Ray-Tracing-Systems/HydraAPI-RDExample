@@ -380,7 +380,10 @@ protected:
   bool lightingInited = false;
   VkBuffer lightingBuffer;
   VkDeviceMemory lightingMemory;
+  VkBuffer lightingWeightsBuffer;
+  VkDeviceMemory lightingWeightsMemory;
   uint32_t lightingBufferSize;
+  uint32_t lightingWeightsBufferSize;
   HydraLiteMath::uint4 gridSize;
   HydraLiteMath::float4 bmin;
   HydraLiteMath::float4 bmax;

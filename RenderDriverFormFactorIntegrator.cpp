@@ -439,6 +439,7 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
         uint32_t rowSize;
         fin.read(reinterpret_cast<char*>(&rowSize), sizeof(rowSize));
         FF[i].resize(rowSize);
+        float rowSum = 0;
         for (uint32_t j = 0; j < rowSize; ++j) {
           uint32_t idx;
           float value;
@@ -446,7 +447,10 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
           fin.read(reinterpret_cast<char*>(&value), sizeof(value));
           FF[i][j].first = idx;
           FF[i][j].second = value;
+          assert(value <= 1 && "Too big FF");
+          rowSum += value;
         }
+        assert(rowSum <= 1 && "Too big FF sum");
       }
       fin.close();
       return;
@@ -523,14 +527,21 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
         const float val1 = value * squares[j];
         const float val2 = value * squares[i];
         if (val1 > 1e-9) {
-          FF[i].emplace_back(j, val1);
+          FF[i].emplace_back(j, min(val1, 1));
         }
         if (val2 > 1e-9) {
-          FF[j].emplace_back(i, val2);
+          FF[j].emplace_back(i, min(val2, 1));
         }
       }
     }
     std::sort(FF[i].begin(), FF[i].end());
+    float rowSum = 1e-9f;
+    for (const auto& elem : FF[i]) {
+      rowSum += elem.second;
+    }
+    for (auto& elem : FF[i]) {
+      elem.second /= rowSum;
+    }
   }
 
   fout.write(reinterpret_cast<const char*>(&DataConfig::FF_VERSION), sizeof(DataConfig::FF_VERSION));
@@ -912,8 +923,10 @@ void RD_FFIntegrator::EndScene() {
   std::ifstream voxelsIn(DataConfig::get().getBinFilePath(L"VoxelIds.bin"), std::ios::binary | std::ios::in);
   uint32_t voxTriCount;
   uint3 gridSize;
+  float voxelSize;
   voxelsIn.read(reinterpret_cast<char*>(&gridSize), sizeof(gridSize));
   voxelsIn.read(reinterpret_cast<char*>(&voxTriCount), sizeof(voxTriCount));
+  voxelsIn.read(reinterpret_cast<char*>(&voxelSize), sizeof(voxelSize));
   for (uint32_t i = 0; i < trianglesCount; ++i) {
     voxelsIn.read(reinterpret_cast<char*>(&voxels[i]), sizeof(voxels[i]));
   }
@@ -924,6 +937,8 @@ void RD_FFIntegrator::EndScene() {
     squares[i] = triangle_square(instanceTriangles[i]);
   }
 
+  std::cout << "Max vox: " << *std::max_element(voxels.begin(), voxels.end()) << std::endl;
+
   for (int i = static_cast<int>(squares.size()) - 1; i >= 0; --i) {
     if (squares[i] < 1e-9) {
       squares.erase(squares.begin() + i);
@@ -933,6 +948,8 @@ void RD_FFIntegrator::EndScene() {
       emission.erase(emission.begin() + i);
     }
   }
+
+  std::cout << "Max vox: " << *std::max_element(voxels.begin(), voxels.end()) << std::endl;
 
   std::cout << trianglesCount << " triangles" << std::endl;
   ComputeFF(static_cast<uint32_t>(instanceTriangles.size()), instanceTriangles, squares);
@@ -958,18 +975,22 @@ void RD_FFIntegrator::EndScene() {
 
   auto lighting = ComputeLightingClassic(emission, colors);
   //auto lighting = ComputeLightingRandom(emission, colors);
-  const uint32_t PATCHES_IN_VOXEL = 4;
+  const uint32_t PATCHES_IN_VOXEL = 3;
   std::vector<std::array<float3, PATCHES_IN_VOXEL>> voxelsGridColors(gridSize.x * gridSize.y * gridSize.z);
   std::vector<std::array<float, PATCHES_IN_VOXEL>> inVoxelSquares(gridSize.x* gridSize.y* gridSize.z);
+  std::vector<std::array<float3, PATCHES_IN_VOXEL>> inVoxelNormals(gridSize.x* gridSize.y* gridSize.z);
+  std::vector<std::array<float4, PATCHES_IN_VOXEL>> inVoxelWeightMatrix(gridSize.x* gridSize.y* gridSize.z);
 
   for (uint32_t i = 0; i < lighting.size(); ++i) {
     const uint32_t voxelId = voxels[i];
     float square = squares[i];
     float3 light = lighting[i];
+    float3 normal = normals[i];
     for (uint32_t j = 0; j < PATCHES_IN_VOXEL; ++j) {
       if (square > inVoxelSquares[voxelId][j]) {
         std::swap(square, inVoxelSquares[voxelId][j]);
         std::swap(light, voxelsGridColors[voxelId][j]);
+        std::swap(normal, inVoxelNormals[voxelId][j]);
       }
     }
   }
@@ -979,13 +1000,41 @@ void RD_FFIntegrator::EndScene() {
         voxelsGridColors[i][j] = voxelsGridColors[i][0];
       }
     }
+    
+    std::array<bool, 3> basisVecExist = {true, true, true};
+    const float EPS = 1e-5f;
+    if (std::abs(dot(inVoxelNormals[i][0], inVoxelNormals[i][1])) > 1 - EPS || length(inVoxelNormals[i][1]) < EPS) {
+      inVoxelNormals[i][1] = (std::abs(inVoxelNormals[i][0].x) > 0.5) ? float3(0, 1, 0) : float3(1, 0, 0);
+      float3 basisVec3 = cross(inVoxelNormals[i][0], inVoxelNormals[i][1]);
+      inVoxelNormals[i][1] = normalize(cross(basisVec3, inVoxelNormals[i][0]));
+      basisVecExist[1] = false;
+    }
+    if (std::abs(dot(inVoxelNormals[i][2], normalize(cross(inVoxelNormals[i][1], inVoxelNormals[i][0])))) < EPS || length(inVoxelNormals[i][2]) < EPS) {
+      inVoxelNormals[i][2] = normalize(cross(inVoxelNormals[i][0], inVoxelNormals[i][1]));
+      basisVecExist[2] = false;
+    }
+
+    float4x4 normalsMat4x4;
+    for (uint32_t j = 0; j < 3; ++j) {
+      normalsMat4x4.row[j] = to_float4(inVoxelNormals[i][j], 0);
+    }
+    normalsMat4x4.row[3] = float4(0, 0, 0, 1);
+    float4x4 weightMat4x4 = inverse4x4(normalsMat4x4);
+    for (uint32_t j = 0; j < 3; ++j) {
+      inVoxelWeightMatrix[i][j] = weightMat4x4.row[j];
+      inVoxelWeightMatrix[i][j].w = basisVecExist[j] ? 1.f : 0.f;
+    }
   }
   std::ofstream VoxelGridLightingOut(DataConfig::get().getBinFilePath(L"VoxelGridLighting.bin"), std::ios::binary | std::ios::out);
   VoxelGridLightingOut.write(reinterpret_cast<const char*>(&gridSize), sizeof(gridSize));
   VoxelGridLightingOut.write(reinterpret_cast<const char*>(&bmin), sizeof(bmin));
-  VoxelGridLightingOut.write(reinterpret_cast<const char*>(&bmax), sizeof(bmax));
+  float3 allignedBmax = bmin + voxelSize * float3((float)gridSize.x, (float)gridSize.y, (float)gridSize.z);
+  VoxelGridLightingOut.write(reinterpret_cast<const char*>(&allignedBmax), sizeof(allignedBmax));
   for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
     VoxelGridLightingOut.write(reinterpret_cast<char*>(&voxelsGridColors[i]), sizeof(voxelsGridColors[i]));
+  }
+  for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
+    VoxelGridLightingOut.write(reinterpret_cast<char*>(&inVoxelWeightMatrix[i]), sizeof(inVoxelWeightMatrix[i]));
   }
   VoxelGridLightingOut.close();
 }

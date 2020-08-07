@@ -364,10 +364,12 @@ static void split_triangles_along_axis(Scene& scene, uint32_t &last_slice_size, 
     bmax = std::max(bmax, pos[coord]);
     bmin = std::min(bmin, pos[coord]);
   }
+  
+  axis_length = 1;
   for (float edge = bmin + voxelSize; edge < bmax; edge += voxelSize) {
     split_triangles_by_plane<coord>(scene, edge, last_slice_size);
+    axis_length++;
   }
-  axis_length = static_cast<uint32_t>(ceil((bmax - bmin) / voxelSize));
   last_slice_size *= axis_length;
 }
 
@@ -557,6 +559,7 @@ void RD_VoxelTessellator::EndScene() {
   t2 = std::chrono::system_clock::now();
   elapsed_seconds = t2 - t1;
   std::cout << "Final scene compressed " << elapsed_seconds.count() << std::endl;
+  std::cout << "Gird size: " << voxelGridSize.x << ' ' << voxelGridSize.y << ' ' << voxelGridSize.z << std::endl;
 
   struct Material
   {
@@ -650,37 +653,11 @@ void RD_VoxelTessellator::EndScene() {
   }
 
   std::ofstream fout(DataConfig::get().getBinFilePath(L"VoxelIds.bin"), std::ios::binary);
-  //std::unordered_map<uint32_t, uint32_t> voxelsRemap;
-  //for (uint32_t i = 0; i < triangles.voxelIds.size(); ++i) {
-  //  if (voxelsRemap.find(triangles.voxelIds[i]) != voxelsRemap.end()) {
-  //    continue;
-  //  }
-  //  voxelsRemap[triangles.voxelIds[i]] = static_cast<uint32_t>(voxelsRemap.size());
-  //}
-  //for (uint32_t i = 0; i < triangles.voxelIds.size(); ++i) {
-  //  triangles.voxelIds[i] = voxelsRemap[triangles.voxelIds[i]];
-  //}
-
-  std::vector<int> idxReorderPerMat(triangles.materials.size());
-  for (uint32_t i = 0; i < idxReorderPerMat.size(); ++i) {
-    idxReorderPerMat[i] = i;
-  }
-  std::sort(idxReorderPerMat.begin(), idxReorderPerMat.end(), [&triangles](int a, int b) {return triangles.materials[a] < triangles.materials[b]; });
-  std::vector<uint32_t> newVox(idxReorderPerMat.size()), newMat(idxReorderPerMat.size());
-  std::vector<ScenePolygon> newPoly(idxReorderPerMat.size());
-  for (uint32_t i = 0; i < idxReorderPerMat.size(); ++i)
-  {
-    newVox[i] = triangles.voxelIds[idxReorderPerMat[i]];
-    newMat[i] = triangles.materials[idxReorderPerMat[i]];
-    newPoly[i] = triangles.polygons[idxReorderPerMat[i]];
-  }
-  //triangles.voxelIds = newVox;
-  //triangles.materials = newMat;
-  //triangles.polygons = newPoly;
 
   uint32_t trianglesCount = static_cast<uint32_t>(triangles.voxelIds.size());
   fout.write(reinterpret_cast<char*>(&voxelGridSize), sizeof(voxelGridSize));
   fout.write(reinterpret_cast<char*>(&trianglesCount), sizeof(trianglesCount));
+  fout.write(reinterpret_cast<char*>(&voxelSize), sizeof(voxelSize));
   for (uint32_t i = 0; i < trianglesCount; ++i) {
     fout.write(reinterpret_cast<char*>(&triangles.voxelIds[i]), sizeof(triangles.voxelIds[i]));
   }

@@ -1416,7 +1416,7 @@ static VkDescriptorSetLayout create_descriptors_set_layout(VkDevice device, cons
 
 void RD_Vulkan::createDescriptorSetLayout() {
   gbufferDescriptorSetLayout = create_descriptors_set_layout(device, 1, 0, 1, VK_SHADER_STAGE_VERTEX_BIT);
-  descriptorSetLayout = create_descriptors_set_layout(device, 2, 1, 3, VK_SHADER_STAGE_FRAGMENT_BIT);
+  descriptorSetLayout = create_descriptors_set_layout(device, 2, 2, 3, VK_SHADER_STAGE_FRAGMENT_BIT);
 }
 
 void RD_Vulkan::createDescriptorPool() {
@@ -1449,8 +1449,6 @@ void RD_Vulkan::createDescriptorSets() {
   VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()));
 
   for (size_t i = 0; i < swapChainImages.size(); i++) {
-    std::vector<VkWriteDescriptorSet> descriptorWrites(3);
-
     std::array<VkDescriptorBufferInfo, 2> buffersInfo;
     buffersInfo[0].buffer = lightsBuffer;
     buffersInfo[0].offset = 0;
@@ -1460,12 +1458,16 @@ void RD_Vulkan::createDescriptorSets() {
     buffersInfo[1].offset = 0;
     buffersInfo[1].range = sizeof(float4) * (4 + 3);
 
-    VkDescriptorBufferInfo lightingBufferInfo = {};
-    lightingBufferInfo.buffer = lightingBuffer;
-    lightingBufferInfo.offset = 0;
-    lightingBufferInfo.range = lightingBufferSize;
+    std::array<VkDescriptorBufferInfo, 2> lightBuffersInfo;
+    lightBuffersInfo[0].buffer = lightingBuffer;
+    lightBuffersInfo[0].offset = 0;
+    lightBuffersInfo[0].range = lightingBufferSize;
 
+    lightBuffersInfo[1].buffer = lightingWeightsBuffer;
+    lightBuffersInfo[1].offset = 0;
+    lightBuffersInfo[1].range = lightingWeightsBufferSize;
 
+    std::vector<VkWriteDescriptorSet> descriptorWrites(3);
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[0].dstSet = descriptorSets[i];
     descriptorWrites[0].dstBinding = 0;
@@ -1479,8 +1481,8 @@ void RD_Vulkan::createDescriptorSets() {
     descriptorWrites[1].dstBinding = 2;
     descriptorWrites[1].dstArrayElement = 0;
     descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    descriptorWrites[1].descriptorCount = 1;
-    descriptorWrites[1].pBufferInfo = &lightingBufferInfo;
+    descriptorWrites[1].descriptorCount = static_cast<uint32_t>(lightBuffersInfo.size());
+    descriptorWrites[1].pBufferInfo = lightBuffersInfo.data();
     descriptorWrites[1].pImageInfo = nullptr; // Optional
     descriptorWrites[1].pTexelBufferView = nullptr; // Optional
     
@@ -1503,7 +1505,7 @@ void RD_Vulkan::createDescriptorSets() {
 
     descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[2].dstSet = descriptorSets[i];
-    descriptorWrites[2].dstBinding = 3;
+    descriptorWrites[2].dstBinding = 4;
     descriptorWrites[2].dstArrayElement = 0;
     descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     descriptorWrites[2].descriptorCount = static_cast<uint32_t>(imagesInfo.size());
@@ -1634,41 +1636,73 @@ void RD_Vulkan::createLightingBuffer() {
   gridSize.x = voxelGridSize.x;
   gridSize.y = voxelGridSize.y;
   gridSize.z = voxelGridSize.z;
+  std::cout << "Grid size: " << gridSize.x << ' ' << gridSize.y << ' ' << gridSize.z << std::endl;
   float3 boxmin;
   float3 boxmax;
   VoxelGridLightingIn.read(reinterpret_cast<char*>(&boxmin), sizeof(boxmin));
   VoxelGridLightingIn.read(reinterpret_cast<char*>(&boxmax), sizeof(boxmax));
   bmin = to_float4(boxmin, 1);
   bmax = to_float4(boxmax, 1);
-  std::vector<std::array<float4, 3>> voxelsGridColors(gridSize.x * gridSize.y * gridSize.z);
+  const uint32_t PATCHES_IN_VOXEL = 3;
+  std::vector<std::array<float4, PATCHES_IN_VOXEL>> voxelsGridColors(gridSize.x * gridSize.y * gridSize.z);
+  std::vector<std::array<float4, PATCHES_IN_VOXEL>> voxelsGridWeightMats(gridSize.x * gridSize.y * gridSize.z);
   for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
-    std::array<float3, 4> colors;
+    std::array<float3, PATCHES_IN_VOXEL> colors;
     for (uint32_t j = 0; j < colors.size(); ++j) {
       VoxelGridLightingIn.read(reinterpret_cast<char*>(&colors[j]), sizeof(colors[j]));
     }
-    voxelsGridColors[i][0] = float4(colors[0].x, colors[1].x, colors[2].x, colors[3].x);
-    voxelsGridColors[i][1] = float4(colors[0].y, colors[1].y, colors[2].y, colors[3].y);
-    voxelsGridColors[i][2] = float4(colors[0].z, colors[1].z, colors[2].z, colors[3].z);
+    voxelsGridColors[i][0] = float4(colors[0].x, colors[1].x, colors[2].x, 0);
+    voxelsGridColors[i][1] = float4(colors[0].y, colors[1].y, colors[2].y, 0);
+    voxelsGridColors[i][2] = float4(colors[0].z, colors[1].z, colors[2].z, 0);
+  }
+  for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
+    std::array<float4, 4> matrix;
+    for (uint32_t j = 0; j < PATCHES_IN_VOXEL; ++j) {
+      VoxelGridLightingIn.read(reinterpret_cast<char*>(&matrix[j]), sizeof(matrix[j]));
+      voxelsGridWeightMats[i][j] = matrix[j];
+    }
   }
   VoxelGridLightingIn.close();
 
   lightingBufferSize = static_cast<uint32_t>(sizeof(voxelsGridColors[0]) * voxelsGridColors.size());
-  VkDeviceSize bufferSize = lightingBufferSize;
+  lightingWeightsBufferSize = static_cast<uint32_t>(sizeof(voxelsGridWeightMats[0]) * voxelsGridWeightMats.size());
+  {
+    VkDeviceSize bufferSize = lightingBufferSize;
 
-  VkBuffer stagingBuffer;
-  VkDeviceMemory stagingBufferMemory;
-  BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
-  void* data;
-  vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-  memcpy(data, voxelsGridColors.data(), (size_t)bufferSize);
-  vkUnmapMemory(device, stagingBufferMemory);
+    void* data;
+    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, voxelsGridColors.data(), (size_t)bufferSize);
+    vkUnmapMemory(device, stagingBufferMemory);
 
-  BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, lightingBuffer, lightingMemory);
+    BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, lightingBuffer, lightingMemory);
 
-  BufferManager::get().copyBuffer(stagingBuffer, lightingBuffer, bufferSize);
-  vkDestroyBuffer(device, stagingBuffer, nullptr);
-  vkFreeMemory(device, stagingBufferMemory, nullptr);
+    BufferManager::get().copyBuffer(stagingBuffer, lightingBuffer, bufferSize);
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingBufferMemory, nullptr);
+  }
+
+  {
+    VkDeviceSize bufferSize = lightingWeightsBufferSize;
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+    void* data;
+    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, voxelsGridWeightMats.data(), (size_t)bufferSize);
+    vkUnmapMemory(device, stagingBufferMemory);
+
+    BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, lightingWeightsBuffer, lightingWeightsMemory);
+
+    BufferManager::get().copyBuffer(stagingBuffer, lightingWeightsBuffer, bufferSize);
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingBufferMemory, nullptr);
+  }
 }
 
 RD_Vulkan::RD_Vulkan()
@@ -1853,7 +1887,7 @@ bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
   color.z = m_diffColors[a_matId * 3 + 2];
   color.w = 0;
   if (isEmission) {
-    float emissionMult = max(max(color.x, color.y), color.z);
+    float emissionMult = std::max(std::max(color.x, color.y), color.z);
     color /= emissionMult;
     color.w = emissionMult;
   }

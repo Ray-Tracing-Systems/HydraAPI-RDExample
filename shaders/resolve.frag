@@ -22,10 +22,11 @@ layout (binding = 1) uniform DrawConsts {
 };
 
 layout(binding = 2) buffer readonly layout1 { vec4 lightingBuffer[]; };
+layout(binding = 3) buffer readonly layout2 { vec4 lightingWeightsBuffer[]; };
 
-layout(binding = 3) uniform sampler2D diffuse;
-layout(binding = 4) uniform sampler2D normals;
-layout(binding = 5) uniform sampler2D depthTex;
+layout(binding = 4) uniform sampler2D diffuse;
+layout(binding = 5) uniform sampler2D normals;
+layout(binding = 6) uniform sampler2D depthTex;
 
 layout(location = 0) in vec2 fragTexCoord;
 
@@ -35,12 +36,13 @@ float saturate(float a) {
   return clamp(a, 0, 1);
 }
 
-vec3 sampleLighting(vec3 worldPos) {
-  vec3 locIdx = (worldPos - bmin) / (bmax - bmin + 1e-5f) * gridSize;
+vec3 sampleLighting(vec3 worldPos, vec3 normal) {
+  vec3 locIdx = (worldPos - bmin) / (bmax - bmin) * gridSize;
   uvec3 idx = uvec3(locIdx);
   uint flatIndices[8];
   flatIndices[0] = idx.x + idx.y * gridSize.x + idx.z * gridSize.x * gridSize.y;
-  vec3 lerps;
+
+  vec3 lerps = vec3(0, 0, 0);
   if (uint(locIdx.x + 0.5) > idx.x) {
     flatIndices[1] = (idx.x + 1 == gridSize.x) ? flatIndices[0] : flatIndices[0] + 1;
     lerps.x = locIdx.x - idx.x - 0.5;
@@ -81,36 +83,39 @@ vec3 sampleLighting(vec3 worldPos) {
     lerps.z = locIdx.z - idx.z + 0.5;
   }
   vec3 lighting[8];
+  float byNormalWeights[8];
+  vec3 testWeights[8];
   for (uint i = 0; i < 8; ++i) {
-    lighting[i].x = dot(lightingBuffer[3 * flatIndices[i] + 0], vec4(0.25, 0.25, 0.25, 0.25));
-    lighting[i].y = dot(lightingBuffer[3 * flatIndices[i] + 1], vec4(0.25, 0.25, 0.25, 0.25));
-    lighting[i].z = dot(lightingBuffer[3 * flatIndices[i] + 2], vec4(0.25, 0.25, 0.25, 0.25));
+    vec3 row0 = lightingWeightsBuffer[3 * flatIndices[i] + 0].xyz;
+    vec3 row1 = lightingWeightsBuffer[3 * flatIndices[i] + 1].xyz;
+    vec3 row2 = lightingWeightsBuffer[3 * flatIndices[i] + 2].xyz;
+
+    vec4 weights = vec4(
+      dot(vec3(row0.x, row1.x, row2.x), normal),
+      dot(vec3(row0.y, row1.y, row2.y), normal),
+      dot(vec3(row0.z, row1.z, row2.z), normal),
+      0);
+
+    weights = max(weights, 0);
+    weights = min(weights, 1);
+
+    testWeights[i] = weights.xyz;
+    byNormalWeights[i] = max(weights.x * lightingWeightsBuffer[3 * flatIndices[i] + 0].w, max(weights.y * lightingWeightsBuffer[3 * flatIndices[i] + 1].w, weights.z * lightingWeightsBuffer[3 * flatIndices[i] + 2].w));
+
+    lighting[i].x = dot(lightingBuffer[3 * flatIndices[i] + 0], weights);
+    lighting[i].y = dot(lightingBuffer[3 * flatIndices[i] + 1], weights);
+    lighting[i].z = dot(lightingBuffer[3 * flatIndices[i] + 2], weights);
   }
   for (uint i = 0; i < 8; i += 2) {
-    if (lighting[i] == vec3(0, 0, 0)) {
-      lighting[i] = lighting[i + 1];
-    }
-    else if (lighting[i + 1] == vec3(0, 0, 0)) {
-      lighting[i + 1] = lighting[i];
-    }
-    lighting[i] = mix(lighting[i], lighting[i + 1], vec3(lerps.x));
+    lighting[i] = mix(lighting[i], lighting[i + 1], vec3(min(max(1 - byNormalWeights[i], lerps.x), byNormalWeights[i + 1])));
+    byNormalWeights[i] = max(byNormalWeights[i], byNormalWeights[i + 1]);
   }
   for (uint i = 0; i < 8; i += 4) {
-    if (lighting[i] == vec3(0, 0, 0)) {
-      lighting[i] = lighting[i + 2];
-    }
-    else if (lighting[i + 2] == vec3(0, 0, 0)) {
-      lighting[i + 2] = lighting[i];
-    }
-    lighting[i] = mix(lighting[i], lighting[i + 2], vec3(lerps.y));
+    lighting[i] = mix(lighting[i], lighting[i + 2], vec3(min(max(1 - byNormalWeights[i], lerps.y), byNormalWeights[i + 2])));
+    byNormalWeights[i] = max(byNormalWeights[i], byNormalWeights[i + 2]);
   }
-  if (lighting[0] == vec3(0, 0, 0)) {
-    lighting[0] = lighting[4];
-  }
-  else if (lighting[4] == vec3(0, 0, 0)) {
-    lighting[4] = lighting[0];
-  }
-  return mix(lighting[0], lighting[4], vec3(lerps.z));
+  lighting[0] = mix(lighting[0], lighting[4], vec3(min(max(1 - byNormalWeights[0], lerps.z), byNormalWeights[4])));
+  return lighting[0];
 }
 
 vec3 ComputeLighting(vec3 worldPos, vec3 normal, DirectLight light) {
@@ -136,6 +141,6 @@ void main() {
   if (emissionMult > 0) {
     outColor.rgb = diffuse * emissionMult;
   } else {
-    outColor.rgb = diffuse * (ComputeLighting(unproj.xyz, normal, lights.directLights[0]) + sampleLighting(unproj.xyz));
+    outColor.rgb = diffuse * (ComputeLighting(unproj.xyz, normal, lights.directLights[0]) + sampleLighting(unproj.xyz, normal));
   }
 }
