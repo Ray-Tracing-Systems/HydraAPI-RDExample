@@ -337,6 +337,12 @@ protected:
     bool hasVertexBuffer = false;
     VkRenderPass renderPass = {};
     VkDescriptorSetLayout descriptorSetLayout;
+    uint32_t rtCount = 1;
+  };
+
+  struct DirectLightTemplate {
+    HydraLiteMath::float3 color;
+    float innerRadius; float outerRadius;
   };
 
   void createInstance();
@@ -427,6 +433,11 @@ protected:
   VkImageView colorImageView;
   VkSampler colorImageSampler;
 
+  VkImage normalImage;
+  VkDeviceMemory normalImageMemory;
+  VkImageView normalImageView;
+  VkSampler normalImageSampler;
+
   VkDescriptorPool descriptorPool;
   std::vector<VkDescriptorSet> descriptorSets;
 
@@ -436,4 +447,5 @@ protected:
   std::vector<std::unique_ptr<Texture>> textures;
   std::unique_ptr<Texture> defaultTexture;
   std::vector<Material> materials;
+  std::vector<DirectLightTemplate> directLightLib;
 };

@@ -207,6 +207,19 @@ void RD_Vulkan::createGbufferRenderPass()
   colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   colorAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
+  VkAttachmentDescription normalAttachment = {};
+  normalAttachment.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+  normalAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+
+  normalAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  normalAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+  normalAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+  normalAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+  normalAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  normalAttachment.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
   VkAttachmentDescription depthAttachment = {};
   depthAttachment.format = findDepthFormat();
   depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -221,15 +234,20 @@ void RD_Vulkan::createGbufferRenderPass()
   colorAttachmentRef.attachment = 0;
   colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+  VkAttachmentReference normalAttachmentRef = {};
+  normalAttachmentRef.attachment = 1;
+  normalAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
   VkAttachmentReference depthAttachmentRef = {};
-  depthAttachmentRef.attachment = 1;
+  depthAttachmentRef.attachment = 2;
   depthAttachmentRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
+  std::array<VkAttachmentReference, 2> colorAttachments = { colorAttachmentRef, normalAttachmentRef };
 
   VkSubpassDescription subpass = {};
   subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-  subpass.colorAttachmentCount = 1;
-  subpass.pColorAttachments = &colorAttachmentRef;
+  subpass.colorAttachmentCount = colorAttachments.size();
+  subpass.pColorAttachments = colorAttachments.data();
   subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
   VkSubpassDependency dependency = {};
@@ -240,7 +258,7 @@ void RD_Vulkan::createGbufferRenderPass()
   dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
   dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
-  std::array<VkAttachmentDescription, 2> attachments = { colorAttachment, depthAttachment };
+  std::array<VkAttachmentDescription, 3> attachments = { colorAttachment, normalAttachment, depthAttachment };
   VkRenderPassCreateInfo renderPassInfo = {};
   renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
   renderPassInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
@@ -421,12 +439,14 @@ VkPipeline RD_Vulkan::createGraphicsPipeline(const PipelineConfig& config, VkPip
   blendStateAttach.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
   blendStateAttach.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
 
+  std::vector<VkPipelineColorBlendAttachmentState> blendStates(config.rtCount, blendStateAttach);
+
   VkPipelineColorBlendStateCreateInfo colorBlending = {};
   colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
   colorBlending.logicOpEnable = VK_FALSE;
   colorBlending.logicOp = VK_LOGIC_OP_COPY; // Optional
-  colorBlending.attachmentCount = 1;
-  colorBlending.pAttachments = &blendStateAttach;
+  colorBlending.attachmentCount = blendStates.size();
+  colorBlending.pAttachments = blendStates.data();
   colorBlending.blendConstants[0] = 0.0f; // Optional
   colorBlending.blendConstants[1] = 0.0f; // Optional
   colorBlending.blendConstants[2] = 0.0f; // Optional
@@ -920,8 +940,9 @@ void RD_Vulkan::createImageViews() {
 }
 
 void RD_Vulkan::createFramebuffers() {
-  std::array<VkImageView, 2> attachments = {
+  std::array<VkImageView, 3> attachments = {
       colorImageView,
+      normalImageView,
       depthImageView,
   };
 
@@ -1199,9 +1220,10 @@ void RD_Vulkan::createCommandBuffers() {
     gbufferRenderPassBeginInfo.framebuffer = gbufferFramebuffer;
     gbufferRenderPassBeginInfo.renderArea.offset = {0, 0};
     gbufferRenderPassBeginInfo.renderArea.extent = swapChainExtent;
-    std::array<VkClearValue, 2> gbufferClearValues = {};
+    std::array<VkClearValue, 3> gbufferClearValues = {};
     gbufferClearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-    gbufferClearValues[1].depthStencil = { 1.0f, 0 };
+    gbufferClearValues[1].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+    gbufferClearValues[2].depthStencil = { 1.0f, 0 };
     gbufferRenderPassBeginInfo.clearValueCount = static_cast<uint32_t>(gbufferClearValues.size());
     gbufferRenderPassBeginInfo.pClearValues = gbufferClearValues.data();
     vkCmdBeginRenderPass(commandBuffers[i], &gbufferRenderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
@@ -1268,11 +1290,16 @@ void RD_Vulkan::cleanupSwapChain() {
   vkDestroyImage(device, colorImage, nullptr);
   vkFreeMemory(device, colorImageMemory, nullptr);
 
+  vkDestroyImageView(device, normalImageView, nullptr);
+  vkDestroyImage(device, normalImage, nullptr);
+  vkFreeMemory(device, normalImageMemory, nullptr);
+
   vkDestroyImageView(device, depthImageView, nullptr);
   vkDestroyImage(device, depthImage, nullptr);
   vkFreeMemory(device, depthImageMemory, nullptr);
 
   vkDestroySampler(device, colorImageSampler, nullptr);
+  vkDestroySampler(device, normalImageSampler, nullptr);
 
   vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 
@@ -1306,6 +1333,7 @@ void RD_Vulkan::createPipelines() {
   geometryConfig.hasVertexBuffer = true;
   geometryConfig.renderPass = gbufferRenderPass;
   geometryConfig.descriptorSetLayout = gbufferDescriptorSetLayout;
+  geometryConfig.rtCount = 2;
   graphicsPipeline = createGraphicsPipeline(geometryConfig, gbufferPipelineLayout);
   PipelineConfig resolveConfig;
   resolveConfig.vertexShaderPath = "shaders/full_screen.spv";
@@ -1355,7 +1383,14 @@ void RD_Vulkan::createDescriptorSetLayout() {
 
   VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &gbufferLayoutInfo, nullptr, &gbufferDescriptorSetLayout));
 
-  std::array<VkDescriptorSetLayoutBinding, 1> bindings = { samplerLayoutBinding };
+  VkDescriptorSetLayoutBinding sampler2LayoutBinding = {};
+  sampler2LayoutBinding.binding = 2;
+  sampler2LayoutBinding.descriptorCount = 1;
+  sampler2LayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  sampler2LayoutBinding.pImmutableSamplers = nullptr;
+  sampler2LayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  std::array<VkDescriptorSetLayoutBinding, 2> bindings = { samplerLayoutBinding, sampler2LayoutBinding };
   VkDescriptorSetLayoutCreateInfo layoutInfo = {};
   layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -1394,18 +1429,25 @@ void RD_Vulkan::createDescriptorSets() {
   for (size_t i = 0; i < swapChainImages.size(); i++) {
     std::vector<VkWriteDescriptorSet> descriptorWrites(1);
     
-    VkDescriptorImageInfo imageInfo = {};
-    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    imageInfo.imageView = colorImageView;
-    imageInfo.sampler = colorImageSampler;
+    VkDescriptorImageInfo colorImageInfo = {};
+    colorImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    colorImageInfo.imageView = colorImageView;
+    colorImageInfo.sampler = colorImageSampler;
+
+    VkDescriptorImageInfo normalImageInfo = {};
+    normalImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    normalImageInfo.imageView = normalImageView;
+    normalImageInfo.sampler = normalImageSampler;
+
+    std::array<VkDescriptorImageInfo, 2> imagesInfo = { colorImageInfo, normalImageInfo };
 
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[0].dstSet = descriptorSets[i];
     descriptorWrites[0].dstBinding = 1;
     descriptorWrites[0].dstArrayElement = 0;
     descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    descriptorWrites[0].descriptorCount = 1;
-    descriptorWrites[0].pImageInfo = &imageInfo;
+    descriptorWrites[0].descriptorCount = imagesInfo.size();
+    descriptorWrites[0].pImageInfo = imagesInfo.data();
 
     vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
   }
@@ -1534,6 +1576,8 @@ void RD_Vulkan::createColorSampler() {
   samplerInfo.maxLod = 1;
 
   VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &colorImageSampler));
+
+  VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &normalImageSampler));
 }
 
 void RD_Vulkan::createDefaultTexture() {
@@ -1559,6 +1603,13 @@ void RD_Vulkan::createColorResources() {
   colorImageView = BufferManager::get().createImageView(colorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 
   BufferManager::get().transitionImageLayout(colorImage, colorFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
+
+  VkFormat normalFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
+  BufferManager::get().createImage(swapChainExtent.width, swapChainExtent.height, 1, normalFormat, VK_IMAGE_TILING_OPTIMAL,
+    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, normalImage, normalImageMemory);
+  normalImageView = BufferManager::get().createImageView(normalImage, normalFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+
+  BufferManager::get().transitionImageLayout(normalImage, normalFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
 
   createColorSampler();
 }

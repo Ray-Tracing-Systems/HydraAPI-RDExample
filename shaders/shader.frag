@@ -8,8 +8,9 @@ layout(location = 1) in vec2 fragTexCoord;
 layout(location = 2) in vec3 fragNormal;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outNormal;
 
 void main() {
-    outColor = pow(texture(texSampler, fragTexCoord) * vec4(fragColor, 1), vec4(1/2.2));
-    outColor = vec4(fragNormal * 0.5 + 0.5, 1);
+    outColor = texture(texSampler, fragTexCoord) * vec4(fragColor, 1);
+    outNormal = vec4(fragNormal, 1);
 }
