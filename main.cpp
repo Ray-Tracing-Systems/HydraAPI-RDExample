@@ -151,30 +151,19 @@ int main(int argc, const char** argv)
     noInterpolation |= strcmp(argv[i], "-noInterpolation") == 0;
   }
   
-  try
-  {
-    //window_main_ff_integrator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
-    //window_main_ff_integrator(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
-    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/tessellated", L"vulkan");
-    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"vulkan");
-    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/03_CornellBoxWithComplexShape/scenelib", L"vulkan");
-    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/04_CornellBoxWithSeveralComplexShape/scenelib", L"vulkan");
-    window_main_free_look_vulkan(L"../Diser/DiffuseReference/05_Sponza/scenelib", L"vulkan");
-    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/06_Indoor/scenelib", L"vulkan");
-    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/07_Outdoor/scenelib", L"vulkan");
-    //window_main_free_look_vulkan(L"../Diser/DiffuseReference/08_BigScene/scenelib", L"vulkan");
-    //window_main_free_look_vulkan(L"data/testscenes/test_35", L"vulkan");
-    //window_main_free_look_vulkan(L"GI_res", L"vulkan");
-    //window_main_free_look(L"data/testscenes/test_42", L"opengl1");
-  }
-  catch (std::runtime_error& e)
-  {
-    std::cout << "std::runtime_error: " << e.what() << std::endl;
-  }
-  catch (...)
-  {
-    std::cout << "unknown exception" << std::endl;
-  }
+  //window_main_ff_integrator(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
+  //window_main_ff_integrator(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/tessellated", L"ff_integrator", recomputeFF, noInterpolation);
+  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/02_CornellBoxWithPrim/tessellated", L"vulkan");
+  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/01_CornellBoxEmpty/tessellated", L"vulkan");
+  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/03_CornellBoxWithComplexShape/scenelib", L"vulkan");
+  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/04_CornellBoxWithSeveralComplexShape/scenelib", L"vulkan");
+  window_main_free_look_vulkan(L"../Diser/DiffuseReference/05_Sponza/scenelib", L"vulkan");
+  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/06_Indoor/scenelib", L"vulkan");
+  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/07_Outdoor/scenelib", L"vulkan");
+  //window_main_free_look_vulkan(L"../Diser/DiffuseReference/08_BigScene/scenelib", L"vulkan");
+  //window_main_free_look_vulkan(L"data/testscenes/test_35", L"vulkan");
+  //window_main_free_look_vulkan(L"GI_res", L"vulkan");
+  //window_main_free_look(L"data/testscenes/test_42", L"opengl1");
 
   hrErrorCallerPlace(L"main"); // for debug needs only
 

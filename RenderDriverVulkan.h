@@ -306,7 +306,7 @@ protected:
     void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels);
 
     VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels);
-    void createImage(uint32_t width, uint32_t height, uint32_t mip_levels, VkSampleCountFlagBits numSamples, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
+    void createImage(uint32_t width, uint32_t height, uint32_t mip_levels, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
       VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory);
 
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
@@ -336,7 +336,6 @@ protected:
     std::string vertexShaderPath, pixelShaderPath;
     bool hasVertexBuffer = false;
     VkRenderPass renderPass = {};
-    VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
     VkDescriptorSetLayout descriptorSetLayout;
   };
 
@@ -362,7 +361,6 @@ protected:
   void createColorSampler();
   VkFormat findDepthFormat();
   QueueFamilyIndices GetQueueFamilyIndex();
-  VkSampleCountFlagBits getMaxUsableSampleCount();
 
   void createDescriptorSetLayout();
   void createDescriptorSets();
@@ -419,7 +417,6 @@ protected:
   VkPipeline graphicsPipeline;
   VkPipeline resolvePipeline;
   VkCommandPool commandPool;
-  VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
   VkImage depthImage;
   VkDeviceMemory depthImageMemory;
@@ -429,10 +426,6 @@ protected:
   VkDeviceMemory colorImageMemory;
   VkImageView colorImageView;
   VkSampler colorImageSampler;
-
-  VkImage resolvedImage;
-  VkDeviceMemory resolvedImageMemory;
-  VkImageView resolvedImageView;
 
   VkDescriptorPool descriptorPool;
   std::vector<VkDescriptorSet> descriptorSets;

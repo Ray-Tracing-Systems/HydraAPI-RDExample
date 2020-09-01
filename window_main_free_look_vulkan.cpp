@@ -50,7 +50,9 @@ static void Init()
 {
   hrErrorCallerPlace(L"Init");
 
-  hrSceneLibraryOpen(g_input.inputLibraryPath.c_str(), HR_OPEN_EXISTING);
+  HRInitInfo initInfo;
+  initInfo.vbSize = 1024;
+  hrSceneLibraryOpen(g_input.inputLibraryPath.c_str(), HR_OPEN_EXISTING, initInfo);
 
   HRSceneLibraryInfo scnInfo = hrSceneLibraryInfo();
 
