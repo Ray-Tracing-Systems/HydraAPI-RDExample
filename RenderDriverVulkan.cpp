@@ -1999,7 +1999,7 @@ bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HR
     float3 pos = { a_input.pos4f[4 * i], a_input.pos4f[4 * i + 1], a_input.pos4f[4 * i + 2] };
     float3 color = { a_input.norm4f[4 * i], a_input.norm4f[4 * i + 1], a_input.norm4f[4 * i + 2] };
     float2 tc = { a_input.texcoord2f[2 * i], a_input.texcoord2f[2 * i + 1] };
-    Vertex vertex = { pos, color * 0.5f + 0.5f, tc };
+    Vertex vertex = { pos, color, tc };
     vertices.push_back(vertex);
   }
 
