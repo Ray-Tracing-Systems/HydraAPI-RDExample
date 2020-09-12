@@ -224,11 +224,11 @@ void RD_Vulkan::createGbufferRenderPass()
   depthAttachment.format = findDepthFormat();
   depthAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
   depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-  depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+  depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
   depthAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
   depthAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
   depthAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-  depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+  depthAttachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
 
   VkAttachmentReference colorAttachmentRef = {};
   colorAttachmentRef.attachment = 0;
@@ -598,7 +598,7 @@ void RD_Vulkan::BufferManager::transitionImageLayout(VkImage image, VkFormat for
   VkPipelineStageFlags sourceStage = {};
   VkPipelineStageFlags destinationStage = {};
 
-  if (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+  if (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL || newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL) {
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
 
     if (hasStencilComponent(format)) {
@@ -620,7 +620,7 @@ void RD_Vulkan::BufferManager::transitionImageLayout(VkImage image, VkFormat for
 
     sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
     destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-  } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+  } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && (newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL || newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)) {
     barrier.srcAccessMask = 0;
     barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
@@ -1300,6 +1300,13 @@ void RD_Vulkan::cleanupSwapChain() {
 
   vkDestroySampler(device, colorImageSampler, nullptr);
   vkDestroySampler(device, normalImageSampler, nullptr);
+  vkDestroySampler(device, depthImageSampler, nullptr);
+
+  vkDestroyBuffer(device, resolveConstants, nullptr);
+  vkFreeMemory(device, resolveConstantsMemory, nullptr);
+
+  vkDestroyBuffer(device, lightsBuffer, nullptr);
+  vkFreeMemory(device, lightsBufferMemory, nullptr);
 
   vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 
@@ -1365,7 +1372,7 @@ void RD_Vulkan::createDescriptorSetLayout() {
   uboLayoutBinding.binding = 0;
   uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
   uboLayoutBinding.descriptorCount = 1;
-  uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
   uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
 
   VkDescriptorSetLayoutBinding samplerLayoutBinding = {};
@@ -1383,14 +1390,39 @@ void RD_Vulkan::createDescriptorSetLayout() {
 
   VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &gbufferLayoutInfo, nullptr, &gbufferDescriptorSetLayout));
 
+  samplerLayoutBinding.binding = 2;
+  samplerLayoutBinding.descriptorCount = 1;
+  samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  samplerLayoutBinding.pImmutableSamplers = nullptr;
+  samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  uboLayoutBinding.binding = 0;
+  uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  uboLayoutBinding.descriptorCount = 1;
+  uboLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
+
+  VkDescriptorSetLayoutBinding lightsLayoutBinding = {};
+  lightsLayoutBinding.binding = 1;
+  lightsLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  lightsLayoutBinding.descriptorCount = 1;
+  lightsLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
   VkDescriptorSetLayoutBinding sampler2LayoutBinding = {};
-  sampler2LayoutBinding.binding = 2;
+  sampler2LayoutBinding.binding = 3;
   sampler2LayoutBinding.descriptorCount = 1;
   sampler2LayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   sampler2LayoutBinding.pImmutableSamplers = nullptr;
   sampler2LayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-  std::array<VkDescriptorSetLayoutBinding, 2> bindings = { samplerLayoutBinding, sampler2LayoutBinding };
+  VkDescriptorSetLayoutBinding sampler3LayoutBinding = {};
+  sampler3LayoutBinding.binding = 4;
+  sampler3LayoutBinding.descriptorCount = 1;
+  sampler3LayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  sampler3LayoutBinding.pImmutableSamplers = nullptr;
+  sampler3LayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  std::array<VkDescriptorSetLayoutBinding, 5> bindings = { uboLayoutBinding, lightsLayoutBinding, samplerLayoutBinding, sampler2LayoutBinding, sampler3LayoutBinding };
   VkDescriptorSetLayoutCreateInfo layoutInfo = {};
   layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -1427,7 +1459,24 @@ void RD_Vulkan::createDescriptorSets() {
   VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()));
 
   for (size_t i = 0; i < swapChainImages.size(); i++) {
-    std::vector<VkWriteDescriptorSet> descriptorWrites(1);
+    std::vector<VkWriteDescriptorSet> descriptorWrites(2);
+
+    std::array<VkDescriptorBufferInfo, 2> buffersInfo;
+    buffersInfo[0].buffer = lightsBuffer;
+    buffersInfo[0].offset = 0;
+    buffersInfo[0].range = sizeof(DirectLight);
+
+    buffersInfo[1].buffer = resolveConstants;
+    buffersInfo[1].offset = 0;
+    buffersInfo[1].range = sizeof(float4x4);
+
+    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[0].dstSet = descriptorSets[i];
+    descriptorWrites[0].dstBinding = 0;
+    descriptorWrites[0].dstArrayElement = 0;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrites[0].descriptorCount = buffersInfo.size();
+    descriptorWrites[0].pBufferInfo = buffersInfo.data();
     
     VkDescriptorImageInfo colorImageInfo = {};
     colorImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
@@ -1439,15 +1488,20 @@ void RD_Vulkan::createDescriptorSets() {
     normalImageInfo.imageView = normalImageView;
     normalImageInfo.sampler = normalImageSampler;
 
-    std::array<VkDescriptorImageInfo, 2> imagesInfo = { colorImageInfo, normalImageInfo };
+    VkDescriptorImageInfo depthImageInfo = {};
+    depthImageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    depthImageInfo.imageView = depthImageView;
+    depthImageInfo.sampler = depthImageSampler;
 
-    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[0].dstSet = descriptorSets[i];
-    descriptorWrites[0].dstBinding = 1;
-    descriptorWrites[0].dstArrayElement = 0;
-    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    descriptorWrites[0].descriptorCount = imagesInfo.size();
-    descriptorWrites[0].pImageInfo = imagesInfo.data();
+    std::array<VkDescriptorImageInfo, 3> imagesInfo = { colorImageInfo, normalImageInfo, depthImageInfo };
+
+    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[1].dstSet = descriptorSets[i];
+    descriptorWrites[1].dstBinding = 2;
+    descriptorWrites[1].dstArrayElement = 0;
+    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[1].descriptorCount = imagesInfo.size();
+    descriptorWrites[1].pImageInfo = imagesInfo.data();
 
     vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
   }
@@ -1578,6 +1632,8 @@ void RD_Vulkan::createColorSampler() {
   VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &colorImageSampler));
 
   VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &normalImageSampler));
+
+  VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &depthImageSampler));
 }
 
 void RD_Vulkan::createDefaultTexture() {
@@ -1589,10 +1645,10 @@ void RD_Vulkan::createDepthResources() {
   VkFormat depthFormat = findDepthFormat();
 
   BufferManager::get().createImage(swapChainExtent.width, swapChainExtent.height, 1, depthFormat, VK_IMAGE_TILING_OPTIMAL,
-    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
+    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
   depthImageView = BufferManager::get().createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
 
-  BufferManager::get().transitionImageLayout(depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1);
+  BufferManager::get().transitionImageLayout(depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 1);
 }
 
 void RD_Vulkan::createColorResources() {
@@ -1654,6 +1710,7 @@ RD_Vulkan::RD_Vulkan()
   BufferManager::get().init(physicalDevice, device, commandPool, graphicsQueue);
   createColorResources();
   createDepthResources();
+  createBuffers();
   createDescriptorPool();
   createDescriptorSets();
   createFramebuffers();
@@ -1759,6 +1816,13 @@ bool RD_Vulkan::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, 
   return true;
 }
 
+static float3 parse_color(const pugi::char_t* s) {
+  float3 color;
+  std::wstringstream input(s);
+  input >> color.x >> color.y >> color.z;
+  return color;
+}
+
 
 bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
 {
@@ -1780,13 +1844,11 @@ bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
 
     if (!std::wstring(clrStr).empty())
     {
-      float color[3];
-      std::wstringstream input(clrStr);
-      input >> color[0] >> color[1] >> color[2];
+      float3 color = parse_color(clrStr);
 
-      m_diffColors[a_matId * 3 + 0] = color[0];
-      m_diffColors[a_matId * 3 + 1] = color[1];
-      m_diffColors[a_matId * 3 + 2] = color[2];
+      m_diffColors[a_matId * 3 + 0] = color.x;
+      m_diffColors[a_matId * 3 + 1] = color.y;
+      m_diffColors[a_matId * 3 + 2] = color.z;
     }
   }
 
@@ -1812,6 +1874,21 @@ bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
 
 bool RD_Vulkan::UpdateLight(int32_t a_lightIdId, pugi::xml_node a_lightNode)
 {
+  auto lightType = a_lightNode.attribute(L"type");
+  if (lightType.as_string() == std::wstring(L"directional")) {
+    DirectLightTemplate newTemplate;
+    auto intencity = a_lightNode.child(L"intensity");
+    newTemplate.color = parse_color(intencity.child(L"color").attribute(L"val").as_string());
+    newTemplate.color *= intencity.child(L"multiplier").attribute(L"val").as_float();
+    auto sizeNode = a_lightNode.child(L"size");
+    newTemplate.innerRadius = sizeNode.attribute(L"inner_radius").as_float();
+    newTemplate.outerRadius = sizeNode.attribute(L"outer_radius").as_float();
+    directLightLib[a_lightIdId] = newTemplate;
+  } else {
+    std::wstring type = lightType.as_string();
+    std::string castedType(type.begin(), type.end());
+    std::cout << "Light " << a_lightIdId << " not processed. Light type: " << castedType << std::endl;
+  }
   return true;
 }
 
@@ -1985,9 +2062,21 @@ void RD_Vulkan::BeginScene(pugi::xml_node a_sceneNode)
   }
 }
 
+void RD_Vulkan::createBuffers() {
+  BufferManager::get().createBuffer(sizeof(directLights[0]), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightsBuffer, lightsBufferMemory);
+  BufferManager::get().createBuffer(sizeof(float4x4), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, resolveConstants, resolveConstantsMemory);
+}
+
 void RD_Vulkan::EndScene()
 {
-
+  if (inited) {
+    return;
+  }
+  inited = true;
+  void* data;
+  vkMapMemory(device, lightsBufferMemory, 0, directLights.size() * sizeof(directLights[0]), 0, &data);
+  memcpy(data, directLights.data(), directLights.size() * sizeof(directLights[0]));
+  vkUnmapMemory(device, lightsBufferMemory);
 }
 
 void RD_Vulkan::Draw()
@@ -2063,6 +2152,14 @@ void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
   const float aspect = float(m_width) / float(m_height);
   float4x4 proj = projectionMatrixTransposed(camFov, aspect, camNearPlane, camFarPlane);
   proj.M(1, 1) *= -1.f;
+
+  const float4x4 globtm = mul(view, proj);
+  const float4x4 invGlobtm = inverse4x4(globtm);
+  std::array<float4, 4> viewVecsData = { invGlobtm.row[0], invGlobtm.row[1], invGlobtm.row[2], invGlobtm.row[3] };
+  void* data;
+  vkMapMemory(device, resolveConstantsMemory, 0, sizeof(viewVecsData), 0, &data);
+  memcpy(data, viewVecsData.data(), sizeof(viewVecsData));
+  vkUnmapMemory(device, resolveConstantsMemory);
 
   for (auto& instance : instances) {
     for (auto& sub_inst : instance) {
@@ -2160,7 +2257,24 @@ void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32
 
 void RD_Vulkan::InstanceLights(int32_t a_light_id, const float* a_matrix, pugi::xml_node* a_custAttrArray, int32_t a_instNum, int32_t a_lightGroupId)
 {
+  if (inited) {
+    return;
+  }
 
+  int lightId = a_custAttrArray->attribute(L"light_id").as_int();
+  if (directLightLib.count(lightId)) {
+    for (uint32_t i = 0; i < a_instNum; ++i) {
+      DirectLight lightToAdd;
+      lightToAdd.color = directLightLib[lightId].color;
+      lightToAdd.innerRadius = directLightLib[lightId].innerRadius;
+      lightToAdd.outerRadius = directLightLib[lightId].outerRadius;
+      float4x4 matrix(a_matrix + i * 16);
+      matrix = transpose(matrix);
+      lightToAdd.direction = -to_float3(matrix.row[1]);
+      lightToAdd.position = to_float3(matrix.row[3]);
+      directLights.push_back(lightToAdd);
+    }
+  }
 }
 
 HRRenderUpdateInfo RD_Vulkan::HaveUpdateNow(int a_maxRaysPerPixel)

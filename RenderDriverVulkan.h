@@ -15,6 +15,7 @@
 #include <string>
 #include <sstream>
 #include <fstream>
+#include <unordered_map>
 
 #include "LiteMath.h"
 
@@ -345,6 +346,15 @@ protected:
     float innerRadius; float outerRadius;
   };
 
+  struct DirectLight {
+    HydraLiteMath::float3 position;
+    float innerRadius;
+    HydraLiteMath::float3 direction;
+    float outerRadius;
+    HydraLiteMath::float3 color;
+    float padding;
+  };
+
   void createInstance();
   void pickPhysicalDevice();
   void createLogicalDevice();
@@ -365,6 +375,7 @@ protected:
   void createDepthResources();
   void createColorResources();
   void createColorSampler();
+  void createBuffers();
   VkFormat findDepthFormat();
   QueueFamilyIndices GetQueueFamilyIndex();
 
@@ -427,6 +438,7 @@ protected:
   VkImage depthImage;
   VkDeviceMemory depthImageMemory;
   VkImageView depthImageView;
+  VkSampler depthImageSampler;
 
   VkImage colorImage;
   VkDeviceMemory colorImageMemory;
@@ -442,10 +454,17 @@ protected:
   std::vector<VkDescriptorSet> descriptorSets;
 
   size_t currentFrame = 0;
+  size_t inited = false;
   std::map<int, std::unique_ptr<HydraMesh>> meshes;
   std::vector<std::vector<std::unique_ptr<InstancesCollection>>> instances;
   std::vector<std::unique_ptr<Texture>> textures;
   std::unique_ptr<Texture> defaultTexture;
   std::vector<Material> materials;
-  std::vector<DirectLightTemplate> directLightLib;
+  std::unordered_map<uint32_t, DirectLightTemplate> directLightLib;
+  std::vector<DirectLight> directLights;
+  VkBuffer resolveConstants;
+  VkDeviceMemory resolveConstantsMemory;
+
+  VkBuffer lightsBuffer;
+  VkDeviceMemory lightsBufferMemory;
 };
