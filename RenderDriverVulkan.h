@@ -337,7 +337,7 @@ protected:
     std::string vertexShaderPath, pixelShaderPath;
     bool hasVertexBuffer = false;
     VkRenderPass renderPass = {};
-    VkDescriptorSetLayout descriptorSetLayout;
+    VkDescriptorSetLayout descriptorSetLayout = {};
     uint32_t rtCount = 1;
   };
 
@@ -417,7 +417,6 @@ protected:
   std::array<VkSemaphore, MAX_FRAMES_IN_FLIGHT> renderFinishedSemaphores;
   std::array<VkFence, MAX_FRAMES_IN_FLIGHT> inFlightFences;
   VkQueue graphicsQueue;
-  VkQueue presentQueue;
   std::vector<VkCommandBuffer> commandBuffers;
   std::vector<VkImage> swapChainImages;
   std::vector<VkImageView> swapChainImageViews;
@@ -454,7 +453,7 @@ protected:
   std::vector<VkDescriptorSet> descriptorSets;
 
   size_t currentFrame = 0;
-  size_t inited = false;
+  bool inited = false;
   std::map<int, std::unique_ptr<HydraMesh>> meshes;
   std::vector<std::vector<std::unique_ptr<InstancesCollection>>> instances;
   std::vector<std::unique_ptr<Texture>> textures;
