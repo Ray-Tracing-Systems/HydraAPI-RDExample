@@ -20,7 +20,7 @@ layout(push_constant) uniform globtmPC
 };
 
 void main() {
-    gl_Position = globtm * ubo.model[gl_InstanceIndex] * vec4(inPosition, 1.0);
+    gl_Position = globtm * (ubo.model[gl_InstanceIndex] * vec4(inPosition, 1.0));
     fragColor = color.rgb;
     fragTexCoord = inTexCoord;
     fragNormal = inNormal;

@@ -1001,7 +1001,7 @@ void RD_Vulkan::createCommandPool() {
   VkCommandPoolCreateInfo commandPoolCreateInfo;
   commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
   commandPoolCreateInfo.queueFamilyIndex = GetQueueFamilyIndex().graphicsFamily;
-  commandPoolCreateInfo.flags = 0;
+  commandPoolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
   VK_CHECK_RESULT(vkCreateCommandPool(device, &commandPoolCreateInfo, nullptr, &commandPool));
 }
 
@@ -1215,7 +1215,9 @@ void RD_Vulkan::createCommandBuffers() {
   allocInfo.commandBufferCount = static_cast<uint32_t>(commandBuffers.size());
 
   VK_CHECK_RESULT(vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()));
+}
 
+void RD_Vulkan::prepareCommandBuffers() {
   for (int i = 0; i < commandBuffers.size(); ++i)
   {
     VkCommandBufferBeginInfo beginInfo = {};
@@ -1228,7 +1230,7 @@ void RD_Vulkan::createCommandBuffers() {
     gbufferRenderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     gbufferRenderPassBeginInfo.renderPass = gbufferRenderPass;
     gbufferRenderPassBeginInfo.framebuffer = gbufferFramebuffer;
-    gbufferRenderPassBeginInfo.renderArea.offset = {0, 0};
+    gbufferRenderPassBeginInfo.renderArea.offset = { 0, 0 };
     gbufferRenderPassBeginInfo.renderArea.extent = swapChainExtent;
     std::array<VkClearValue, 3> gbufferClearValues = {};
     gbufferClearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -1368,7 +1370,6 @@ void RD_Vulkan::recreateSwapChain() {
   createColorResources();
   createDepthResources();
   createFramebuffers();
-  //createCommandBuffers();
 }
 
 static VkDescriptorSetLayout create_descriptors_set_layout(VkDevice device, const uint32_t uniform_buffers_count, const uint32_t textures_count, const VkShaderStageFlagBits buffers_bits) {
@@ -1618,7 +1619,6 @@ RD_Vulkan::RD_Vulkan()
   createDescriptorSets();
   createFramebuffers();
   createDefaultTexture();
-  //createCommandBuffers();
   createSyncObjects();
 
   camFov       = 45.0f;
@@ -2038,6 +2038,8 @@ void RD_Vulkan::EndScene()
 
     vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
   }
+
+  createCommandBuffers();
 }
 
 void RD_Vulkan::Draw()
@@ -2057,7 +2059,7 @@ void RD_Vulkan::Draw()
   }
 
   updateUniformBuffer(imageIndex);
-  createCommandBuffers();
+  prepareCommandBuffers();
 
   VkSubmitInfo submitInfo = {};
   submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
