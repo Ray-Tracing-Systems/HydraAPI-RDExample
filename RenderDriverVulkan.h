@@ -148,138 +148,7 @@ protected:
 
   struct Material {
     int textureIdx = -1;
-    HydraLiteMath::float3 color;
-  };
-
-  class Mesh {
-    VkBuffer vertexBuffer = {};
-    VkBuffer indexBuffer = {};
-    uint32_t indicesOffset = 0, indicesCount = 0;
-    int materialId = -1;
-
-  public:
-    Mesh() {}
-    Mesh(uint32_t indicesOffset, uint32_t indicesCount) :
-      indicesOffset(indicesOffset),
-      indicesCount(indicesCount)
-    {}
-
-    void bind(VkCommandBuffer command_buffer) const;
-
-    void setBuffers(VkBuffer vertex_buffer, VkBuffer index_buffer) {
-      vertexBuffer = vertex_buffer;
-      indexBuffer = index_buffer;
-    }
-
-    uint32_t getIndicesCount() const {
-      return indicesCount;
-    }
-
-    void setMaterialId(int id) {
-      materialId = id;
-    }
-
-    int getMaterialId() const {
-      return materialId;
-    }
-  };
-
-  class HydraMesh {
-    VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
-    VkBuffer indexBuffer;
-    VkDeviceMemory indexBufferMemory;
-    VkDevice device;
-
-    std::vector<Mesh> meshes;
-
-    void createVertexBuffer(const std::vector<Vertex>& vertices);
-    template <typename T>
-    void createIndexBuffer(const std::vector<T>& indices) {
-      VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
-
-      VkBuffer stagingBuffer;
-      VkDeviceMemory stagingBufferMemory;
-      BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-      void* data;
-      vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-      memcpy(data, indices.data(), (size_t)bufferSize);
-      vkUnmapMemory(device, stagingBufferMemory);
-
-      BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
-
-      BufferManager::get().copyBuffer(stagingBuffer, indexBuffer, bufferSize);
-
-      vkDestroyBuffer(device, stagingBuffer, nullptr);
-      vkFreeMemory(device, stagingBufferMemory, nullptr);
-    }
-
-  public:
-    template <typename T>
-    HydraMesh(VkDevice dev, const std::vector<Vertex>& vertices, const std::vector<T>& indices) : device(dev) {
-      createVertexBuffer(vertices);
-      createIndexBuffer(indices);
-    }
-
-    ~HydraMesh() {
-      vkDestroyBuffer(device, indexBuffer, nullptr);
-      vkFreeMemory(device, indexBufferMemory, nullptr);
-
-      vkDestroyBuffer(device, vertexBuffer, nullptr);
-      vkFreeMemory(device, vertexBufferMemory, nullptr);
-    }
-
-    void addMesh(Mesh mesh) {
-      meshes.emplace_back(std::move(mesh));
-      meshes.back().setBuffers(vertexBuffer, indexBuffer);
-    }
-
-    const Mesh& getMesh(int i) const {
-      return meshes[i];
-    }
-
-    uint32_t getMeshesCount() const {
-      return static_cast<uint32_t>(meshes.size());
-    }
-  };
-
-
-  class InstancesCollection {
-    std::vector<UniformBufferObject> ubos;
-    int meshId;
-    VkDescriptorSetLayout descriptorSetLayout;
-    std::vector<VkBuffer> uniformBuffers;
-    std::vector<VkDeviceMemory> uniformBuffersMemory;
-    VkDescriptorPool descriptorPool;
-    std::vector<VkDescriptorSet> descriptorSets;
-    VkDevice device;
-    int swapchain_images = 0;
-    const int MAX_INSTANCES = 128;
-    HydraLiteMath::float4 matColor;
-
-    Texture *texture;
-
-    void createUniformBuffers();
-    void createDescriptorPool();
-    void createDescriptorSets();
-
-  public:
-    InstancesCollection(VkDevice dev, VkDescriptorSetLayout layout, Texture *tex, int mesh_id, int swapchain_im, HydraLiteMath::float4 color)
-      : device(dev), descriptorSetLayout(layout), texture(tex),
-      meshId(mesh_id), swapchain_images(swapchain_im), matColor(color) {
-      createUniformBuffers();
-      createDescriptorPool();
-      createDescriptorSets();
-    }
-
-    ~InstancesCollection();
-
-    int getMeshId() const { return meshId; }
-    bool instancesUpdated(const std::vector<HydraLiteMath::float4x4>& models) const;
-    void updateInstances(const std::vector<HydraLiteMath::float4x4>& models);
-    void bind(VkCommandBuffer command_buffer, VkPipelineLayout layout, int idx);
-    void updateUniformBuffer(uint32_t current_image, const HydraLiteMath::float4x4& view, const HydraLiteMath::float4x4& proj);
+    HydraLiteMath::float4 color;
   };
 
   class BufferManager {
@@ -333,12 +202,33 @@ protected:
     };
   };
 
+  struct StaticMesh {
+    uint32_t indicesOffset;
+    uint32_t incidesCount;
+    uint32_t materialId;
+  };
+
+  struct StaticMeshInstances {
+    uint32_t matricesOffset;
+    uint32_t matricesCount;
+    StaticMesh mesh;
+  };
+
+  struct StaticModel {
+    std::vector<StaticMesh> meshes;
+  };
+
+  struct StaticModelInstances {
+    std::vector<StaticMeshInstances> parts;
+  };
+
   struct PipelineConfig {
     std::string vertexShaderPath, pixelShaderPath;
     bool hasVertexBuffer = false;
     VkRenderPass renderPass = {};
     VkDescriptorSetLayout descriptorSetLayout = {};
     uint32_t rtCount = 1;
+    std::vector<VkPushConstantRange> pushConstants;
   };
 
   struct DirectLightTemplate {
@@ -383,6 +273,8 @@ protected:
   void createDescriptorSets();
   void createDescriptorPool();
   void updateUniformBuffer(uint32_t current_image);
+  void createVertexBuffer();
+  void createIndexBuffer();
 
   std::wstring m_libPath;
 
@@ -450,20 +342,35 @@ protected:
   VkSampler normalImageSampler;
 
   VkDescriptorPool descriptorPool;
+  VkDescriptorPool gbufferDescriptorPool = {};
   std::vector<VkDescriptorSet> descriptorSets;
 
   size_t currentFrame = 0;
   bool inited = false;
-  std::map<int, std::unique_ptr<HydraMesh>> meshes;
-  std::vector<std::vector<std::unique_ptr<InstancesCollection>>> instances;
   std::vector<std::unique_ptr<Texture>> textures;
   std::unique_ptr<Texture> defaultTexture;
   std::vector<Material> materials;
   std::unordered_map<uint32_t, DirectLightTemplate> directLightLib;
   std::vector<DirectLight> directLights;
+  std::unordered_map<int, StaticModel> modelsLib;
+  std::vector<StaticModelInstances> modelInstances;
+  std::vector<VkDescriptorSet> materialsLib;
   VkBuffer resolveConstants;
   VkDeviceMemory resolveConstantsMemory;
 
   VkBuffer lightsBuffer;
   VkDeviceMemory lightsBufferMemory;
+
+  VkBuffer globalVertexBuffer = {};
+  VkDeviceMemory globalVertexBufferMemory = {};
+  VkBuffer globalIndexBuffer = {};
+  VkDeviceMemory globalIndexBufferMemory = {};
+
+  std::vector<Vertex> vertices;
+  std::vector<uint32_t> indices;
+  std::vector<HydraLiteMath::float4x4> matrices;
+
+  VkBuffer matricesBuffer = {};
+  VkDeviceMemory matricesBufferMemory = {};
+  HydraLiteMath::float4x4 globtm;
 };

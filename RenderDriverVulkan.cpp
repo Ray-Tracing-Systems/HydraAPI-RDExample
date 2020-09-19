@@ -4,6 +4,7 @@
 
 #include <cassert>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <set>
@@ -90,7 +91,7 @@ struct Vertex {
 
 RD_Vulkan::QueueFamilyIndices RD_Vulkan::GetQueueFamilyIndex()
 {
-  QueueFamilyIndices indices = {};
+  QueueFamilyIndices familyIndices = {};
   uint32_t queueFamilyCount;
 
   vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, NULL);
@@ -107,25 +108,25 @@ RD_Vulkan::QueueFamilyIndices RD_Vulkan::GetQueueFamilyIndex()
 
     if (props.queueCount > 0 && (props.queueFlags & VK_QUEUE_GRAPHICS_BIT))
     {
-      indices.graphicsFamily = i;
+      familyIndices.graphicsFamily = i;
     }
 
     VkBool32 presentSupport = false;
     vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
     if (props.queueCount > 0 && presentSupport) {
-      indices.presentFamily = i;
+      familyIndices.presentFamily = i;
     }
   }
 
-  return indices;
+  return familyIndices;
 }
 
 void RD_Vulkan::createLogicalDevice()
 {
-  QueueFamilyIndices indices = GetQueueFamilyIndex();
+  QueueFamilyIndices familyIndices = GetQueueFamilyIndex();
 
   std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-  std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily, indices.presentFamily };
+  std::set<uint32_t> uniqueQueueFamilies = { familyIndices.graphicsFamily, familyIndices.presentFamily };
 
   float queuePriority = 1.0f;
   for (uint32_t queueFamily : uniqueQueueFamilies) {
@@ -466,8 +467,8 @@ VkPipeline RD_Vulkan::createGraphicsPipeline(const PipelineConfig& config, VkPip
   pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   pipelineLayoutCreateInfo.setLayoutCount = 1;
   pipelineLayoutCreateInfo.pSetLayouts = &config.descriptorSetLayout;
-  pipelineLayoutCreateInfo.pushConstantRangeCount = 0; // Optional
-  pipelineLayoutCreateInfo.pPushConstantRanges = nullptr; // Optional
+  pipelineLayoutCreateInfo.pushConstantRangeCount = config.pushConstants.size();
+  pipelineLayoutCreateInfo.pPushConstantRanges = config.pushConstants.data();
 
   VkPipelineDepthStencilStateCreateInfo depthStencil = {};
   depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -546,7 +547,7 @@ void RD_Vulkan::BufferManager::createBuffer(VkDeviceSize size, VkBufferUsageFlag
   vkBindBufferMemory(deviceRef, buffer, bufferMemory, 0);
 }
 
-void RD_Vulkan::HydraMesh::createVertexBuffer(const std::vector<Vertex>& vertices) {
+void RD_Vulkan::createVertexBuffer() {
   VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
   VkBuffer stagingBuffer;
@@ -558,9 +559,29 @@ void RD_Vulkan::HydraMesh::createVertexBuffer(const std::vector<Vertex>& vertice
   memcpy(data, vertices.data(), (size_t)bufferSize);
   vkUnmapMemory(device, stagingBufferMemory);
 
-  BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+  BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, globalVertexBuffer, globalVertexBufferMemory);
 
-  BufferManager::get().copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+  BufferManager::get().copyBuffer(stagingBuffer, globalVertexBuffer, bufferSize);
+  vkDestroyBuffer(device, stagingBuffer, nullptr);
+  vkFreeMemory(device, stagingBufferMemory, nullptr);
+}
+
+void RD_Vulkan::createIndexBuffer() {
+  VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+  VkBuffer stagingBuffer;
+  VkDeviceMemory stagingBufferMemory;
+  BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+  void* data;
+  vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+  memcpy(data, indices.data(), (size_t)bufferSize);
+  vkUnmapMemory(device, stagingBufferMemory);
+
+  BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, globalIndexBuffer, globalIndexBufferMemory);
+
+  BufferManager::get().copyBuffer(stagingBuffer, globalIndexBuffer, bufferSize);
+
   vkDestroyBuffer(device, stagingBuffer, nullptr);
   vkFreeMemory(device, stagingBufferMemory, nullptr);
 }
@@ -903,10 +924,10 @@ void RD_Vulkan::createSwapChain() {
   createInfo.imageArrayLayers = 1;
   createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-  QueueFamilyIndices indices = GetQueueFamilyIndex();
-  uint32_t queueFamilyIndices[] = { indices.graphicsFamily, indices.presentFamily };
+  QueueFamilyIndices familyIndices = GetQueueFamilyIndex();
+  uint32_t queueFamilyIndices[] = { familyIndices.graphicsFamily, familyIndices.presentFamily };
 
-  if (indices.graphicsFamily != indices.presentFamily) {
+  if (familyIndices.graphicsFamily != familyIndices.presentFamily) {
     createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
     createInfo.queueFamilyIndexCount = 2;
     createInfo.pQueueFamilyIndices = queueFamilyIndices;
@@ -982,18 +1003,6 @@ void RD_Vulkan::createCommandPool() {
   commandPoolCreateInfo.queueFamilyIndex = GetQueueFamilyIndex().graphicsFamily;
   commandPoolCreateInfo.flags = 0;
   VK_CHECK_RESULT(vkCreateCommandPool(device, &commandPoolCreateInfo, nullptr, &commandPool));
-}
-
-void RD_Vulkan::Mesh::bind(VkCommandBuffer command_buffer) const {
-  VkBuffer vertexBuffers[] = { vertexBuffer };
-  VkDeviceSize offsets[] = { 0 };
-  vkCmdBindVertexBuffers(command_buffer, 0, 1, vertexBuffers, offsets);
-
-  vkCmdBindIndexBuffer(command_buffer, indexBuffer, indicesOffset * sizeof(uint32_t), VK_INDEX_TYPE_UINT32);
-}
-
-void RD_Vulkan::InstancesCollection::bind(VkCommandBuffer command_buffer, VkPipelineLayout layout, int idx) {
-  vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, layout, 0, 1, &descriptorSets[idx], 0, nullptr);
 }
 
 void RD_Vulkan::BufferManager::createImage(uint32_t width, uint32_t height, uint32_t mip_levels,
@@ -1231,12 +1240,15 @@ void RD_Vulkan::createCommandBuffers() {
 
     vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-    for (auto &instance : instances) {
-      for (int j = 0; j < instance.size(); ++j) {
-        const Mesh &mesh = meshes[instance[j]->getMeshId()]->getMesh(j);
-        mesh.bind(commandBuffers[i]);
-        instance[j]->bind(commandBuffers[i], gbufferPipelineLayout, i);
-        vkCmdDrawIndexed(commandBuffers[i], mesh.getIndicesCount(), 1, 0, 0, 0);
+    VkDeviceSize zeroOffset = 0;
+    vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, &globalVertexBuffer, &zeroOffset);
+    vkCmdBindIndexBuffer(commandBuffers[i], globalIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+    vkCmdPushConstants(commandBuffers[i], gbufferPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4), &globtm);
+    for (auto& modelInstance : modelInstances) {
+      for (auto& subMeshes : modelInstance.parts) {
+        vkCmdPushConstants(commandBuffers[i], gbufferPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(float4x4), sizeof(float4), &materials[subMeshes.mesh.materialId].color);
+        vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, gbufferPipelineLayout, 0, 1, &materialsLib[subMeshes.mesh.materialId], 0, nullptr);
+        vkCmdDrawIndexed(commandBuffers[i], subMeshes.mesh.incidesCount, subMeshes.matricesCount, subMeshes.mesh.indicesOffset, 0, subMeshes.matricesOffset);
       }
     }
 
@@ -1278,14 +1290,6 @@ void RD_Vulkan::createSyncObjects() {
   }
 }
 
-RD_Vulkan::InstancesCollection::~InstancesCollection() {
-  for (size_t i = 0; i < swapchain_images; i++) {
-    vkDestroyBuffer(device, uniformBuffers[i], nullptr);
-    vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
-  }
-  vkDestroyDescriptorPool(device, descriptorPool, nullptr);
-}
-
 void RD_Vulkan::cleanupSwapChain() {
   vkDestroyImageView(device, colorImageView, nullptr);
   vkDestroyImage(device, colorImage, nullptr);
@@ -1309,6 +1313,7 @@ void RD_Vulkan::cleanupSwapChain() {
   vkDestroyBuffer(device, lightsBuffer, nullptr);
   vkFreeMemory(device, lightsBufferMemory, nullptr);
 
+  vkDestroyDescriptorPool(device, gbufferDescriptorPool, nullptr);
   vkDestroyDescriptorPool(device, descriptorPool, nullptr);
 
   vkDestroyFramebuffer(device, gbufferFramebuffer, nullptr);
@@ -1330,8 +1335,6 @@ void RD_Vulkan::cleanupSwapChain() {
   }
 
   vkDestroySwapchainKHR(device, swapchain, nullptr);
-
-  instances.clear();
 }
 
 void RD_Vulkan::createPipelines() {
@@ -1342,6 +1345,7 @@ void RD_Vulkan::createPipelines() {
   geometryConfig.renderPass = gbufferRenderPass;
   geometryConfig.descriptorSetLayout = gbufferDescriptorSetLayout;
   geometryConfig.rtCount = 2;
+  geometryConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4) + sizeof(float4) });
   graphicsPipeline = createGraphicsPipeline(geometryConfig, gbufferPipelineLayout);
   PipelineConfig resolveConfig;
   resolveConfig.vertexShaderPath = "shaders/full_screen.spv";
@@ -1364,7 +1368,7 @@ void RD_Vulkan::recreateSwapChain() {
   createColorResources();
   createDepthResources();
   createFramebuffers();
-  createCommandBuffers();
+  //createCommandBuffers();
 }
 
 static VkDescriptorSetLayout create_descriptors_set_layout(VkDevice device, const uint32_t uniform_buffers_count, const uint32_t textures_count, const VkShaderStageFlagBits buffers_bits) {
@@ -1478,85 +1482,12 @@ void RD_Vulkan::createDescriptorSets() {
   }
 }
 
-void RD_Vulkan::InstancesCollection::createUniformBuffers() {
-  VkDeviceSize bufferSize = sizeof(float4x4) * MAX_INSTANCES + sizeof(float4);
-
-  uniformBuffers.resize(swapchain_images);
-  uniformBuffersMemory.resize(swapchain_images);
-
-  for (size_t i = 0; i < swapchain_images; i++) {
-    BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
-  }
-}
-
-void RD_Vulkan::InstancesCollection::createDescriptorPool() {
-  std::array<VkDescriptorPoolSize, 2> poolSizes = {};
-  poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-  poolSizes[0].descriptorCount = static_cast<uint32_t>(swapchain_images);
-  poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  poolSizes[1].descriptorCount = static_cast<uint32_t>(swapchain_images);
-
-  VkDescriptorPoolCreateInfo poolInfo = {};
-  poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-  poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
-  poolInfo.pPoolSizes = poolSizes.data();
-  poolInfo.maxSets = static_cast<uint32_t>(swapchain_images);
-
-  VK_CHECK_RESULT(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
-}
-
 VkDescriptorImageInfo RD_Vulkan::Texture::getDescriptor() const {
   VkDescriptorImageInfo imageInfo = {};
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   imageInfo.imageView = textureImageView;
   imageInfo.sampler = textureSampler;
   return imageInfo;
-}
-
-void RD_Vulkan::InstancesCollection::createDescriptorSets() {
-  std::vector<VkDescriptorSetLayout> layouts(swapchain_images, descriptorSetLayout);
-  VkDescriptorSetAllocateInfo allocInfo = {};
-  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  allocInfo.descriptorPool = descriptorPool;
-  allocInfo.descriptorSetCount = static_cast<uint32_t>(swapchain_images);
-  allocInfo.pSetLayouts = layouts.data();
-
-  descriptorSets.resize(swapchain_images);
-  VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()));
-
-  for (size_t i = 0; i < swapchain_images; i++) {
-    VkDescriptorBufferInfo bufferInfo = {};
-    bufferInfo.buffer = uniformBuffers[i];
-    bufferInfo.offset = 0;
-    bufferInfo.range = sizeof(float4x4) * MAX_INSTANCES;
-
-    VkDescriptorImageInfo imageInfo;
-
-    std::vector<VkWriteDescriptorSet> descriptorWrites(1);
-    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[0].dstSet = descriptorSets[i];
-    descriptorWrites[0].dstBinding = 0;
-    descriptorWrites[0].dstArrayElement = 0;
-    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    descriptorWrites[0].descriptorCount = 1;
-    descriptorWrites[0].pBufferInfo = &bufferInfo;
-    descriptorWrites[0].pImageInfo = nullptr; // Optional
-    descriptorWrites[0].pTexelBufferView = nullptr; // Optional
-
-    if (texture) {
-      descriptorWrites.resize(2);
-      imageInfo = texture->getDescriptor();
-      descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-      descriptorWrites[1].dstSet = descriptorSets[i];
-      descriptorWrites[1].dstBinding = 1;
-      descriptorWrites[1].dstArrayElement = 0;
-      descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-      descriptorWrites[1].descriptorCount = 1;
-      descriptorWrites[1].pImageInfo = &imageInfo;
-    }
-
-    vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
-  }
 }
 
 void RD_Vulkan::Texture::createTextureSampler() {
@@ -1687,7 +1618,7 @@ RD_Vulkan::RD_Vulkan()
   createDescriptorSets();
   createFramebuffers();
   createDefaultTexture();
-  createCommandBuffers();
+  //createCommandBuffers();
   createSyncObjects();
 
   camFov       = 45.0f;
@@ -1722,7 +1653,13 @@ RD_Vulkan::~RD_Vulkan()
   vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
   vkDestroyDescriptorSetLayout(device, gbufferDescriptorSetLayout, nullptr);
 
-  meshes.clear();
+  vkDestroyBuffer(device, globalVertexBuffer, nullptr);
+  vkFreeMemory(device, globalVertexBufferMemory, nullptr);
+  vkDestroyBuffer(device, globalIndexBuffer, nullptr);
+  vkFreeMemory(device, globalIndexBufferMemory, nullptr);
+
+  vkDestroyBuffer(device, matricesBuffer, nullptr);
+  vkFreeMemory(device, matricesBufferMemory, nullptr);
 
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -1829,7 +1766,7 @@ bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
     materials.resize(a_matId + 1);
   }
 
-  float3& color = materials[a_matId].color;
+  float4& color = materials[a_matId].color;
   color.x = m_diffColors[a_matId * 3 + 0];
   color.y = m_diffColors[a_matId * 3 + 1];
   color.z = m_diffColors[a_matId * 3 + 2];
@@ -1951,6 +1888,9 @@ bool RD_Vulkan::UpdateSettings(pugi::xml_node a_settingsNode)
 
 bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HRMeshDriverInput& a_input, const HRBatchInfo* a_batchList, int32_t a_listSize)
 {
+  if (inited) {
+    return true;
+  }
   if (a_input.triNum == 0) // don't support loading mesh from file 'a_fileName'
   {
     return true;
@@ -1966,41 +1906,28 @@ bool RD_Vulkan::UpdateMesh(int32_t a_meshId, pugi::xml_node a_meshNode, const HR
   }
   begins.push_back(a_input.triNum);
 
-  std::vector<uint32_t> indices(a_input.indices, a_input.indices + a_input.triNum * 3);
-  std::vector<Vertex> vertices;
+  std::vector<uint32_t> meshIndices(a_input.indices, a_input.indices + a_input.triNum * 3);
+  std::vector<Vertex> meshVertices;
   for (int i = 0; i < a_input.vertNum; ++i) {
     float3 pos = { a_input.pos4f[4 * i], a_input.pos4f[4 * i + 1], a_input.pos4f[4 * i + 2] };
-    float3 color = { a_input.norm4f[4 * i], a_input.norm4f[4 * i + 1], a_input.norm4f[4 * i + 2] };
+    float3 normal = { a_input.norm4f[4 * i], a_input.norm4f[4 * i + 1], a_input.norm4f[4 * i + 2] };
     float2 tc = { a_input.texcoord2f[2 * i], a_input.texcoord2f[2 * i + 1] };
-    Vertex vertex = { pos, color, tc };
-    vertices.push_back(vertex);
+    Vertex vertex = { pos, normal, tc };
+    meshVertices.push_back(vertex);
   }
 
-  meshes[a_meshId] = std::make_unique<HydraMesh>(device, vertices, indices);
+  vertices.insert(vertices.end(), meshVertices.begin(), meshVertices.end());
+  const uint32_t indicesOffset = indices.size();
+  indices.resize(indicesOffset + meshIndices.size());
+  std::transform(meshIndices.begin(), meshIndices.end(), indices.begin() + indicesOffset, [indicesOffset](const uint32_t idx) { return idx + indicesOffset; });
 
   for (int matId = 0; matId < begins.size() - 1; ++matId) {
-    Mesh mesh(begins[matId] * 3, (begins[matId + 1] - begins[matId]) * 3);
     const int matNum = a_input.triMatIndices[begins[matId]];
-    mesh.setMaterialId(matNum);
-    meshes[a_meshId]->addMesh(mesh);
-  }
-  createCommandBuffers();
-
-  for (int32_t batchId = 0; batchId < a_listSize; batchId++)
-  {
-    HRBatchInfo batch = a_batchList[batchId];
-    
-    if (!invalidMaterial)
-    {
-      if (m_diffTexId[batch.matId] >= 0)
-      {
-        int texId = m_diffTexId[batch.matId];
-      }
-    }
-    else
-    {
-    }
-    const int drawElementsNum = batch.triEnd - batch.triBegin;
+    StaticMesh subMesh;
+    subMesh.indicesOffset = begins[matId] * 3 + indicesOffset;
+    subMesh.incidesCount = (begins[matId + 1] - begins[matId]) * 3;
+    subMesh.materialId = matNum;
+    modelsLib[a_meshId].meshes.emplace_back(subMesh);
   }
   return true;
 }
@@ -2050,6 +1977,67 @@ void RD_Vulkan::EndScene()
   vkMapMemory(device, lightsBufferMemory, 0, directLights.size() * sizeof(directLights[0]), 0, &data);
   memcpy(data, directLights.data(), directLights.size() * sizeof(directLights[0]));
   vkUnmapMemory(device, lightsBufferMemory);
+
+  createVertexBuffer();
+  createIndexBuffer();
+  BufferManager::get().createBuffer(sizeof(matrices[0]) * matrices.size(), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, matricesBuffer, matricesBufferMemory);
+  vkMapMemory(device, matricesBufferMemory, 0, sizeof(matrices[0]) * matrices.size(), 0, &data);
+  memcpy(data, matrices.data(), sizeof(matrices[0]) * matrices.size());
+  vkUnmapMemory(device, matricesBufferMemory);
+
+  {
+    std::array<VkDescriptorPoolSize, 2> poolSizes = {};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(materials.size());
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount = static_cast<uint32_t>(materials.size());
+
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = static_cast<uint32_t>(materials.size());
+
+    VK_CHECK_RESULT(vkCreateDescriptorPool(device, &poolInfo, nullptr, &gbufferDescriptorPool));
+  }
+
+  materialsLib.resize(materials.size());
+  std::vector<VkDescriptorSetLayout> layouts(materialsLib.size(), gbufferDescriptorSetLayout);
+  VkDescriptorSetAllocateInfo allocInfo = {};
+  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  allocInfo.descriptorPool = gbufferDescriptorPool;
+  allocInfo.descriptorSetCount = layouts.size();
+  allocInfo.pSetLayouts = layouts.data();
+  VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, materialsLib.data()));
+  for (uint32_t i = 0; i < materials.size(); ++i) {
+    std::vector<VkWriteDescriptorSet> descriptorWrites(2);
+
+    std::array<VkDescriptorBufferInfo, 1> buffersInfo;
+    buffersInfo[0].buffer = matricesBuffer;
+    buffersInfo[0].offset = 0;
+    buffersInfo[0].range = sizeof(matrices[0]) * matrices.size();
+
+    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[0].dstSet = materialsLib[i];
+    descriptorWrites[0].dstBinding = 0;
+    descriptorWrites[0].dstArrayElement = 0;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrites[0].descriptorCount = buffersInfo.size();
+    descriptorWrites[0].pBufferInfo = buffersInfo.data();
+
+    Texture* tex = (materials[i].textureIdx == -1 ? defaultTexture : textures[materials[i].textureIdx]).get();
+    VkDescriptorImageInfo imageInfo = tex->getDescriptor();
+
+    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[1].dstSet = materialsLib[i];
+    descriptorWrites[1].dstBinding = 1;
+    descriptorWrites[1].dstArrayElement = 0;
+    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[1].descriptorCount = 1;
+    descriptorWrites[1].pImageInfo = &imageInfo;
+
+    vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+  }
 }
 
 void RD_Vulkan::Draw()
@@ -2069,6 +2057,7 @@ void RD_Vulkan::Draw()
   }
 
   updateUniformBuffer(imageIndex);
+  createCommandBuffers();
 
   VkSubmitInfo submitInfo = {};
   submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -2100,22 +2089,6 @@ void RD_Vulkan::Draw()
   currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
-void RD_Vulkan::InstancesCollection::updateUniformBuffer(uint32_t current_image, const float4x4& view, const float4x4& proj) {
-  std::vector<float4x4> resMatrices;
-  for (auto& ubo : ubos) {
-    ubo.setView(view);
-    ubo.setProj(proj);
-    resMatrices.push_back(ubo.getResultRef());
-  }
-
-  void* data;
-  vkMapMemory(device, uniformBuffersMemory[current_image], 0, sizeof(resMatrices[0]) * resMatrices.size() + sizeof(matColor), 0, &data);
-  memcpy(data, &matColor, sizeof(matColor));
-  data = reinterpret_cast<uint8_t*>(data) + sizeof(matColor);
-  memcpy(data, resMatrices.data(), sizeof(resMatrices[0]) * resMatrices.size());
-  vkUnmapMemory(device, uniformBuffersMemory[current_image]);
-}
-
 void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
   const float3 eye(camPos[0], camPos[1], camPos[2]);
   const float3 center(camLookAt[0], camLookAt[1], camLookAt[2]);
@@ -2126,19 +2099,13 @@ void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
   float4x4 proj = projectionMatrixTransposed(camFov, aspect, camNearPlane, camFarPlane);
   proj.M(1, 1) *= -1.f;
 
-  const float4x4 globtm = mul(view, proj);
+  globtm = mul(view, proj);
   const float4x4 invGlobtm = inverse4x4(globtm);
   std::array<float4, 4> viewVecsData = { invGlobtm.row[0], invGlobtm.row[1], invGlobtm.row[2], invGlobtm.row[3] };
   void* data;
   vkMapMemory(device, resolveConstantsMemory, 0, sizeof(viewVecsData), 0, &data);
   memcpy(data, viewVecsData.data(), sizeof(viewVecsData));
   vkUnmapMemory(device, resolveConstantsMemory);
-
-  for (auto& instance : instances) {
-    for (auto& sub_inst : instance) {
-      sub_inst->updateUniformBuffer(current_image, view, proj);
-    }
-  }
 }
 
 static inline void mat4x4_transpose(float M[16], const float N[16])
@@ -2151,38 +2118,10 @@ static inline void mat4x4_transpose(float M[16], const float N[16])
   }
 }
 
-bool RD_Vulkan::InstancesCollection::instancesUpdated(const std::vector<float4x4>& models) const {
-  if (models.size() != ubos.size()) {
-    return true;
-  }
-  const uint32_t ROWS = 4;
-  for (int i = 0; i < models.size(); ++i) {
-    for (int j = 0; j < ROWS; ++j) {
-      const float4& newRow = models[i].row[j];
-      const float4& oldRow = ubos[i].getModel().row[j];
-      if (newRow.x != oldRow.x || newRow.y != oldRow.y || newRow.z != oldRow.z || newRow.w != oldRow.w) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-void RD_Vulkan::InstancesCollection::updateInstances(const std::vector<HydraLiteMath::float4x4>& models) {
-  assert(models.size() < MAX_INSTANCES);
-  ubos.resize(models.size());
-  for (int i = 0; i < ubos.size(); ++i) {
-    ubos[i].setModel(models[i]);
-  }
-}
-
 void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32_t a_instNum, const int* a_lightInstId, const int* a_remapId, const int* a_realInstId)
 {
-  int instancesId = 0;
-  for (; instancesId < instances.size(); ++instancesId) {
-    if (a_mesh_id == instances[instancesId][0]->getMeshId()) {
-      break;
-    }
+  if (inited) {
+    return;
   }
   std::vector<float4x4> models(a_instNum, a_matrices);
   for (int32_t i = 0; i < a_instNum; i++)
@@ -2192,41 +2131,26 @@ void RD_Vulkan::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices, int32
     models[i] = float4x4(matrixT2);
   }
 
-  if (instancesId != instances.size()) {
-    bool subInstUpdate = true;
-    for (uint32_t i = 0; i < instances[instancesId].size(); ++i) {
-      subInstUpdate &= instances[instancesId][i]->instancesUpdated(models);
-    }
-    if (subInstUpdate) {
-      return;
-    }
-  }
-
-  if (instancesId == instances.size()) {
-    instances.resize(instances.size() + 1);
-    for (uint32_t i = 0; i < meshes[a_mesh_id]->getMeshesCount(); ++i) {
-      int materialId = meshes[a_mesh_id]->getMesh(i).getMaterialId();
-      if (a_remapId[0] != -1) {
-        const int jBegin = tableOffsetsAndSize[a_remapId[0]].x;
-        const int jEnd = tableOffsetsAndSize[a_remapId[0]].x + tableOffsetsAndSize[a_remapId[0]].y;
-        for (int j = jBegin; j < jEnd; j += 2) {
-          if (allRemapLists[j] == materialId) {
-            materialId = allRemapLists[j + 1];
-            break;
-          }
+  StaticModelInstances modelInstance;
+  for (auto mesh : modelsLib[a_mesh_id].meshes) {
+    StaticMeshInstances meshInst;
+    meshInst.matricesOffset = matrices.size();
+    meshInst.matricesCount = a_instNum;
+    meshInst.mesh = mesh;
+    if (a_remapId[0] != -1) {
+      const int jBegin = tableOffsetsAndSize[a_remapId[0]].x;
+      const int jEnd = tableOffsetsAndSize[a_remapId[0]].x + tableOffsetsAndSize[a_remapId[0]].y;
+      for (int j = jBegin; j < jEnd; j += 2) {
+        if (allRemapLists[j] == meshInst.mesh.materialId) {
+          meshInst.mesh.materialId = allRemapLists[j + 1];
+          break;
         }
       }
-      Texture* tex = materials[materialId].textureIdx != -1 ? textures[materials[materialId].textureIdx].get() : defaultTexture.get();
-      const float3& col = materials[materialId].color;
-      float4 color = { col.x, col.y, col.z, 1 };
-      instances.back().push_back(std::make_unique<InstancesCollection>(device, gbufferDescriptorSetLayout, tex, a_mesh_id, static_cast<int>(swapChainImages.size()), color));
     }
-    createCommandBuffers();
+    modelInstance.parts.push_back(meshInst);
   }
-
-  for (uint32_t i = 0; i < instances[instancesId].size(); ++i) {
-    instances[instancesId][i]->updateInstances(models);
-  }
+  matrices.insert(matrices.end(), models.begin(), models.end());
+  modelInstances.push_back(modelInstance);
 }
 
 
