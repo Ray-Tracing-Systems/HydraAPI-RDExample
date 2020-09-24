@@ -998,7 +998,7 @@ void RD_Vulkan::createFramebuffers() {
 }
 
 void RD_Vulkan::createCommandPool() {
-  VkCommandPoolCreateInfo commandPoolCreateInfo;
+  VkCommandPoolCreateInfo commandPoolCreateInfo = {};
   commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
   commandPoolCreateInfo.queueFamilyIndex = GetQueueFamilyIndex().graphicsFamily;
   commandPoolCreateInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
