@@ -238,11 +238,23 @@ float2 hammersley2d(uint32_t i, uint32_t N) {
   return float2(float(i) / float(N), radicalInverse_VdC(i));
 }
 
-static std::vector<std::vector<Sample>> gen_samples(const std::vector<RD_FFIntegrator::Triangle>& triangles) {
-  const int PER_AXIS_COUNT = 2;
-  const int SAMPLES_COUNT = PER_AXIS_COUNT * PER_AXIS_COUNT;
-  std::vector<float3> randomValues(SAMPLES_COUNT);
-  for (int i = 0; i < SAMPLES_COUNT; ++i) {
+const uint32_t SAMPLES_PACKET_SIZE_S = 4;
+const uint32_t SAMPLES_PACKET_SIZE_M = 8;
+const uint32_t SAMPLES_PACKET_SIZE_L = 16;
+const uint32_t SAMPLES_PACKET_SIZE_XL = 32;
+
+const uint32_t SAMPLES_PACKET_SIZE = SAMPLES_PACKET_SIZE_S;
+const uint32_t SAMPLES_PAIRS = SAMPLES_PACKET_SIZE * SAMPLES_PACKET_SIZE;
+const uint32_t RT_PACKET_SIZE = 16;
+static_assert(SAMPLES_PAIRS % RT_PACKET_SIZE == 0);
+const uint32_t WORDS_FOR_OCCLUSION = (SAMPLES_PAIRS + RT_PACKET_SIZE - 1) / RT_PACKET_SIZE;
+
+using SamplesPacket = std::array<Sample, SAMPLES_PACKET_SIZE>;
+
+
+static std::vector<SamplesPacket> gen_samples(const std::vector<RD_FFIntegrator::Triangle>& triangles) {
+  std::vector<float3> randomValues(SAMPLES_PACKET_SIZE_S);
+  for (int i = 0; i < SAMPLES_PACKET_SIZE_S; ++i) {
     //randomValues[i] = hammersley2d(i / PER_AXIS_COUNT, i % PER_AXIS_COUNT);
     randomValues[i].x = static_cast<float>(rand()) / RAND_MAX;
     randomValues[i].y = static_cast<float>(rand()) / RAND_MAX;
@@ -250,10 +262,10 @@ static std::vector<std::vector<Sample>> gen_samples(const std::vector<RD_FFInteg
     float sum = dot(randomValues[i], float3(1, 1, 1));
     randomValues[i] /= sum;
   }
-  std::vector<std::vector<Sample>> samples;
+  std::vector<SamplesPacket> samples;
   for (int i = 0; i < triangles.size(); ++i) {
-    std::vector<Sample> sm(SAMPLES_COUNT);
-    for (int j = 0; j < SAMPLES_COUNT; ++j) {
+    SamplesPacket sm;
+    for (int j = 0; j < SAMPLES_PACKET_SIZE_S; ++j) {
       float4 pos = randomValues[j].x * triangles[i].points[0] + randomValues[j].y * triangles[i].points[1] + randomValues[j].z * triangles[i].points[2];
       const auto& normArray = triangles[i].normal.value();
       float4 normal = randomValues[j].x * normArray[0] + randomValues[j].y * normArray[1] + randomValues[j].z * normArray[2];
@@ -379,37 +391,36 @@ public:
     rtcGetSceneBounds(Scene, &bounds);
   }
 
-  uint16_t traceRays(const std::vector<Sample>& samples1, const std::vector<Sample>& samples2) {
-    uint16_t result = 0;
-    const int PACKET_SIZE = 4;
-    RTCRay16 raysPacket;
-    for (int i = 0, target_id = 0; i < PACKET_SIZE; ++i) {
+  std::array<uint16_t, WORDS_FOR_OCCLUSION> traceRays(const SamplesPacket& samples1, const SamplesPacket& samples2) {
+    std::array<uint16_t, WORDS_FOR_OCCLUSION> result = { };
+    std::array<RTCRay16, WORDS_FOR_OCCLUSION> raysPacket = {};
+    for (int i = 0, target_id = 0; i < SAMPLES_PACKET_SIZE; ++i) {
       const Sample& s1 = samples1[i];
-      for (int j = 0; j < PACKET_SIZE; ++j, ++target_id) {
+      for (int j = 0; j < SAMPLES_PACKET_SIZE; ++j, ++target_id) {
+        const uint32_t packet_id = target_id / RT_PACKET_SIZE;
+        const uint32_t sampleInPacket = target_id % RT_PACKET_SIZE;
         const Sample& s2 = samples2[j];
         const float BIAS = 1e-5f;
         float3 dir = s2.pos - s1.pos;
-        raysPacket.org_x[target_id] = s1.pos.x;
-        raysPacket.org_y[target_id] = s1.pos.y;
-        raysPacket.org_z[target_id] = s1.pos.z;
-        raysPacket.tnear[target_id] = BIAS;
-        raysPacket.dir_x[target_id] = dir.x;
-        raysPacket.dir_y[target_id] = dir.y;
-        raysPacket.dir_z[target_id] = dir.z;
-        raysPacket.tfar[target_id] = 1.f - BIAS;
+        raysPacket[packet_id].org_x[sampleInPacket] = s1.pos.x;
+        raysPacket[packet_id].org_y[sampleInPacket] = s1.pos.y;
+        raysPacket[packet_id].org_z[sampleInPacket] = s1.pos.z;
+        raysPacket[packet_id].tnear[sampleInPacket] = BIAS;
+        raysPacket[packet_id].dir_x[sampleInPacket] = dir.x;
+        raysPacket[packet_id].dir_y[sampleInPacket] = dir.y;
+        raysPacket[packet_id].dir_z[sampleInPacket] = dir.z;
+        raysPacket[packet_id].tfar[sampleInPacket] = 1.f - BIAS;
       }
     }
 
-    memset(raysPacket.id, 0, sizeof(raysPacket.id));
-    memset(raysPacket.mask, 0, sizeof(raysPacket.mask));
-    memset(raysPacket.time, 0, sizeof(raysPacket.time));
-
     const int validMask = ~0u;
-    rtcOccluded16(&validMask, Scene, &IntersectionContext, &raysPacket); //CHECK_EMBREE
-
-    for (uint32_t k = 0; k < PACKET_SIZE * PACKET_SIZE; ++k) {
-      if (std::isinf(raysPacket.tfar[k])) {
-        result |= 1u << k;
+#pragma omp parallel for num_threads(8)
+    for (int i = 0; i < WORDS_FOR_OCCLUSION; ++i) {
+      rtcOccluded16(&validMask, Scene, &IntersectionContext, &raysPacket[i]); //CHECK_EMBREE
+      for (uint32_t k = 0; k < RT_PACKET_SIZE; ++k) {
+        if (std::isinf(raysPacket[i].tfar[k])) {
+          result[i] |= 1u << k;
+        }
       }
     }
 
@@ -460,7 +471,7 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
   }
   std::ofstream fout(ffFilename, std::ios::binary);
 
-  std::vector<std::vector<Sample>> samples = gen_samples(instanceTriangles);
+  std::vector<SamplesPacket> samples = gen_samples(instanceTriangles);
 
   EmbreeTracer tracer(triangles);
 
@@ -473,13 +484,13 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
   for (int i = 0; i < static_cast<int>(quadsCount) - 1; ++i) {
     //Timer timer("row", i);
     if (100 * i / quadsCount < 100 * (i + 1) / quadsCount) {
-      std::cout << 100 * i / quadsCount << "% finished" << std::endl;
+      std::cout << 100 * (i + 1) / quadsCount << "% finished" << std::endl;
     }
-    const std::vector<Sample>& samples1 = samples[i];
+    const SamplesPacket& samples1 = samples[i];
 
     patchesToProcess.clear();
     for (uint32_t j = i + 1; j < quadsCount; ++j) {
-      const std::vector<Sample>& samples2 = samples[j];
+      const SamplesPacket& samples2 = samples[j];
       const float3 posToPos = samples1[0].pos - samples2[0].pos;
       if (!(dot(samples1[0].normal, posToPos) >= 0 || dot(samples2[0].normal, posToPos) <= 0)) {
         patchesToProcess.push_back(j);
@@ -489,19 +500,23 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
 #pragma omp parallel for num_threads(8)
     for (int idx = 0; idx < patchesToProcess.size(); ++idx) {
       int j = patchesToProcess[idx];
-      const std::vector<Sample>& samples2 = samples[j];
+      const SamplesPacket& samples2 = samples[j];
 
-      uint16_t occluded = tracer.traceRays(samples1, samples2);
-      if (occluded == 0xFFFF) {
+      auto occluded = tracer.traceRays(samples1, samples2);
+      bool fullOcclusion = true;
+      for (auto occl : occluded) {
+        fullOcclusion &= (occl == 0xFFFF);
+      }
+      if (fullOcclusion) {
         continue;
       }
       float value = 0;
       int samplesCount = 0;
-      for (int k = 0; k < samples1.size(); ++k) {
+      for (int k = 0, occlValue = 0; k < samples1.size(); ++k) {
         const Sample& sample1 = samples1[k];
-        for (int h = 0; h < samples2.size(); ++h, occluded >>= 1) {
+        for (int h = 0; h < samples2.size(); ++h, occluded[occlValue / WORDS_FOR_OCCLUSION] >>= 1) {
           const Sample& sample2 = samples2[h];
-          if ((occluded & 1) != 0) {
+          if ((occluded[occlValue / WORDS_FOR_OCCLUSION] & 1) != 0) {
             samplesCount++;
             continue;
           }
@@ -562,7 +577,7 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
 std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<float3>& emission, const std::vector<float3>& colors) {
   const int quadsCount = static_cast<int>(colors.size());
   std::vector<float3> incident;
-  std::vector<float3> lighting(emission);
+  std::vector<float3> lighting(emission.size(), float3(0, 0, 0));
   std::vector<float3> excident(emission);
   for (int iter = 0; iter < 5; ++iter) {
     incident.assign(quadsCount, float3());
@@ -575,7 +590,7 @@ std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<fl
     for (int i = 0; i < quadsCount; ++i) {
       excident[i] = incident[i] * colors[i];
       if (iter != 0 || true) {
-        lighting[i] += incident[i];// excident[i];
+        lighting[i] += incident[i];
       }
     }
   }
@@ -783,7 +798,7 @@ void merge_ff(std::vector<uint32_t>& voxels,
   std::vector<float>& squares,
   std::vector<std::vector<std::pair<int, float>>>& ff
 ) {
-  Timer t("Merge ff");
+  //Timer t("Merge ff");
 
   std::unordered_map<uint32_t, std::vector<uint32_t>> perVoxelSplits;
   for (uint32_t i = 0; i < voxels.size(); ++i) {
