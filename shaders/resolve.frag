@@ -46,8 +46,13 @@ vec3 ComputeLighting(vec3 worldPos, vec3 normal, DirectLight light) {
 void main() {
   vec3 diffuse = texture(diffuse, fragTexCoord).rgb;
   vec3 normal = texture(normals, fragTexCoord).xyz;
+  float emissionMult = texture(normals, fragTexCoord).a;
   float depth = texture(depthTex, fragTexCoord).x;
   vec4 unproj = (invViewProj * vec4(fragTexCoord * vec2(2, 2) - 1, depth, 1));
   unproj /= unproj.w;
-  outColor.rgb = diffuse * ComputeLighting(unproj.xyz, normal, lights.directLights[0]);
+  if (emissionMult > 0) {
+    outColor.rgb = diffuse * emissionMult;
+  } else {
+    outColor.rgb = diffuse * ComputeLighting(unproj.xyz, normal, lights.directLights[0]);
+  }
 }

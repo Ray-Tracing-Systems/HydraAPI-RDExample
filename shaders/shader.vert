@@ -7,7 +7,7 @@ layout(location = 2) in vec2 inTexCoord;
 
 layout(location = 0) out vec3 fragColor;
 layout(location = 1) out vec2 fragTexCoord;
-layout(location = 2) out vec3 fragNormal;
+layout(location = 2) out vec4 fragNormal_emissionMult;
 
 layout(binding = 0) uniform UniformBufferObject {
   mat4 model[512];
@@ -16,12 +16,12 @@ layout(binding = 0) uniform UniformBufferObject {
 layout(push_constant) uniform globtmPC
 {
   mat4 globtm;
-  vec4 color;
+  vec4 color_emissionMult;
 };
 
 void main() {
     gl_Position = globtm * (ubo.model[gl_InstanceIndex] * vec4(inPosition, 1.0));
-    fragColor = color.rgb;
+    fragColor = color_emissionMult.rgb;
     fragTexCoord = inTexCoord;
-    fragNormal = inNormal;
+    fragNormal_emissionMult = vec4(inNormal, color_emissionMult.a);
 }

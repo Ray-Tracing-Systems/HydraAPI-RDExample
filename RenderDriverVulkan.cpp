@@ -1740,7 +1740,8 @@ bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
   pugi::xml_node texNode = clrNode.child(L"texture");
   pugi::xml_node mtxNode = a_materialNode.child(L"diffuse").child(L"sampler").child(L"matrix");
 
-  if (clrNode == nullptr)
+  bool isEmission = clrNode == nullptr;
+  if (isEmission)
     clrNode = a_materialNode.child(L"emission").child(L"color"); // no diffuse color ? => draw emission color instead!
 
   if (clrNode != nullptr)
@@ -1770,6 +1771,12 @@ bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
   color.x = m_diffColors[a_matId * 3 + 0];
   color.y = m_diffColors[a_matId * 3 + 1];
   color.z = m_diffColors[a_matId * 3 + 2];
+  color.w = 0;
+  if (isEmission) {
+    float emissionMult = max(max(color.x, color.y), color.z);
+    color /= emissionMult;
+    color.w = emissionMult;
+  }
 
   if (texNode != nullptr) {
     m_diffTexId[a_matId] = texNode.attribute(L"id").as_int();
