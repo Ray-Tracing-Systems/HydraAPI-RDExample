@@ -243,7 +243,7 @@ const uint32_t SAMPLES_PACKET_SIZE_M = 8;
 const uint32_t SAMPLES_PACKET_SIZE_L = 16;
 const uint32_t SAMPLES_PACKET_SIZE_XL = 32;
 
-const uint32_t SAMPLES_PACKET_SIZE = SAMPLES_PACKET_SIZE_S;
+const uint32_t SAMPLES_PACKET_SIZE = SAMPLES_PACKET_SIZE_L;
 const uint32_t SAMPLES_PAIRS = SAMPLES_PACKET_SIZE * SAMPLES_PACKET_SIZE;
 const uint32_t RT_PACKET_SIZE = 16;
 static_assert(SAMPLES_PAIRS % RT_PACKET_SIZE == 0);
@@ -253,8 +253,8 @@ using SamplesPacket = std::array<Sample, SAMPLES_PACKET_SIZE>;
 
 
 static std::vector<SamplesPacket> gen_samples(const std::vector<RD_FFIntegrator::Triangle>& triangles) {
-  std::vector<float3> randomValues(SAMPLES_PACKET_SIZE_S);
-  for (int i = 0; i < SAMPLES_PACKET_SIZE_S; ++i) {
+  std::vector<float3> randomValues(SAMPLES_PACKET_SIZE);
+  for (int i = 0; i < SAMPLES_PACKET_SIZE; ++i) {
     //randomValues[i] = hammersley2d(i / PER_AXIS_COUNT, i % PER_AXIS_COUNT);
     randomValues[i].x = static_cast<float>(rand()) / RAND_MAX;
     randomValues[i].y = static_cast<float>(rand()) / RAND_MAX;
@@ -265,7 +265,7 @@ static std::vector<SamplesPacket> gen_samples(const std::vector<RD_FFIntegrator:
   std::vector<SamplesPacket> samples;
   for (int i = 0; i < triangles.size(); ++i) {
     SamplesPacket sm;
-    for (int j = 0; j < SAMPLES_PACKET_SIZE_S; ++j) {
+    for (int j = 0; j < SAMPLES_PACKET_SIZE; ++j) {
       float4 pos = randomValues[j].x * triangles[i].points[0] + randomValues[j].y * triangles[i].points[1] + randomValues[j].z * triangles[i].points[2];
       const auto& normArray = triangles[i].normal.value();
       float4 normal = randomValues[j].x * normArray[0] + randomValues[j].y * normArray[1] + randomValues[j].z * normArray[2];

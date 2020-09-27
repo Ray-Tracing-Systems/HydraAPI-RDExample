@@ -7,7 +7,7 @@ class DataConfig {
   DataConfig() = default;
   ~DataConfig() = default;
 public:
-  static const uint32_t FF_VERSION = 5;
+  static const uint32_t FF_VERSION = 6;
 
 
   void init(const std::wstring& scene_name, uint32_t voxel_size) {
