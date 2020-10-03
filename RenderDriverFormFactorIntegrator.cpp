@@ -400,7 +400,7 @@ public:
         const uint32_t packet_id = target_id / RT_PACKET_SIZE;
         const uint32_t sampleInPacket = target_id % RT_PACKET_SIZE;
         const Sample& s2 = samples2[j];
-        const float BIAS = 1e-5f;
+        const float BIAS = 1e-6f;
         float3 dir = s2.pos - s1.pos;
         raysPacket[packet_id].org_x[sampleInPacket] = s1.pos.x;
         raysPacket[packet_id].org_y[sampleInPacket] = s1.pos.y;
@@ -414,7 +414,6 @@ public:
     }
 
     const int validMask = ~0u;
-#pragma omp parallel for num_threads(8)
     for (int i = 0; i < WORDS_FOR_OCCLUSION; ++i) {
       rtcOccluded16(&validMask, Scene, &IntersectionContext, &raysPacket[i]); //CHECK_EMBREE
       for (uint32_t k = 0; k < RT_PACKET_SIZE; ++k) {
@@ -514,9 +513,9 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
       int samplesCount = 0;
       for (int k = 0, occlValue = 0; k < samples1.size(); ++k) {
         const Sample& sample1 = samples1[k];
-        for (int h = 0; h < samples2.size(); ++h, occluded[occlValue / WORDS_FOR_OCCLUSION] >>= 1) {
+        for (int h = 0; h < samples2.size(); ++h, occlValue++) {
           const Sample& sample2 = samples2[h];
-          if ((occluded[occlValue / WORDS_FOR_OCCLUSION] & 1) != 0) {
+          if ((occluded[occlValue / RT_PACKET_SIZE] & (1 << (occlValue % RT_PACKET_SIZE))) != 0) {
             samplesCount++;
             continue;
           }
