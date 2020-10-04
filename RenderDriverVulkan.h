@@ -255,6 +255,7 @@ protected:
   VkPipeline createGraphicsPipeline(const PipelineConfig&, VkPipelineLayout& layout);
   void createGbufferRenderPass();
   void createResolveRenderPass();
+  void createPostprocessRenderPass();
   void createFramebuffers();
   void createCommandPool();
   void createCommandBuffers();
@@ -315,16 +316,21 @@ protected:
   std::vector<VkImageView> swapChainImageViews;
   std::vector<VkFramebuffer> swapChainFramebuffers;
   VkFramebuffer gbufferFramebuffer;
+  VkFramebuffer resolveFramebuffer;
   VkFormat swapChainImageFormat;
   VkExtent2D swapChainExtent;
   VkDescriptorSetLayout gbufferDescriptorSetLayout;
-  VkDescriptorSetLayout descriptorSetLayout;
+  VkDescriptorSetLayout resolveDescriptorSetLayout;
+  VkDescriptorSetLayout postprocessDescriptorSetLayout;
   VkPipelineLayout gbufferPipelineLayout;
-  VkPipelineLayout pipelineLayout;
+  VkPipelineLayout resolvePipelineLayout;
+  VkPipelineLayout postprocessPipelineLayout;
   VkRenderPass gbufferRenderPass;
   VkRenderPass resolveRenderPass;
+  VkRenderPass postprocessRenderPass;
   VkPipeline graphicsPipeline;
   VkPipeline resolvePipeline;
+  VkPipeline postprocessPipeline;
   VkCommandPool commandPool;
 
   VkImage depthImage;
@@ -342,9 +348,21 @@ protected:
   VkImageView normalImageView;
   VkSampler normalImageSampler;
 
-  VkDescriptorPool descriptorPool;
+  VkImage frameImage;
+  VkDeviceMemory frameImageMemory;
+  VkImageView frameImageView;
+  VkSampler frameImageSampler;
+
+  VkImage frameMipchainImage;
+  VkDeviceMemory frameMipchainImageMemory;
+  VkImageView frameMipchainImageView;
+  VkSampler frameMipchainImageSampler;
+
+  VkDescriptorPool resolveDescriptorPool = {};
+  VkDescriptorPool postprocessDescriptorPool = {};
   VkDescriptorPool gbufferDescriptorPool = {};
-  std::vector<VkDescriptorSet> descriptorSets;
+  VkDescriptorSet resolveDescriptorSets;
+  std::vector<VkDescriptorSet> postprocessDescriptorSets;
 
   size_t currentFrame = 0;
   bool inited = false;
@@ -374,4 +392,5 @@ protected:
   VkBuffer matricesBuffer = {};
   VkDeviceMemory matricesBufferMemory = {};
   HydraLiteMath::float4x4 globtm;
+  uint32_t screenMipLevels = 0;
 };

@@ -40,7 +40,7 @@ vec3 ComputeLighting(vec3 worldPos, vec3 normal, DirectLight light) {
   vec3 tangentVec = -pointToLight - normalize(light.direction) * lightDot * length(pointToLight);
   float radius = length(tangentVec);
   float distMult = saturate((light.outerRadius - radius) / (light.outerRadius - light.innerRadius));
-  return max(dot(pointToLightDir, normal), 0.0) * min(light.color, 1.0) * distMult;
+  return max(dot(pointToLightDir, normal), 0.0) * light.color * distMult;
 }
 
 void main() {
