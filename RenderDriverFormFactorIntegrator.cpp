@@ -553,8 +553,10 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
     for (const auto& elem : FF[i]) {
       rowSum += elem.second;
     }
-    for (auto& elem : FF[i]) {
-      elem.second /= rowSum;
+    if (rowSum > 1.0f) {
+      for (auto& elem : FF[i]) {
+        elem.second /= rowSum;
+      }
     }
   }
 
