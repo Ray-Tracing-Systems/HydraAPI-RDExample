@@ -1019,15 +1019,20 @@ void RD_FFIntegrator::EndScene() {
     
     std::array<bool, 3> basisVecExist = {true, true, true};
     const float EPS = 1e-5f;
-    if (std::abs(dot(inVoxelNormals[i][0], inVoxelNormals[i][1])) > 1 - EPS || length(inVoxelNormals[i][1]) < EPS) {
-      inVoxelNormals[i][1] = (std::abs(inVoxelNormals[i][0].x) > 0.5) ? float3(0, 1, 0) : float3(1, 0, 0);
-      float3 basisVec3 = cross(inVoxelNormals[i][0], inVoxelNormals[i][1]);
-      inVoxelNormals[i][1] = normalize(cross(basisVec3, inVoxelNormals[i][0]));
-      basisVecExist[1] = false;
-    }
-    if (std::abs(dot(inVoxelNormals[i][2], normalize(cross(inVoxelNormals[i][1], inVoxelNormals[i][0])))) < EPS || length(inVoxelNormals[i][2]) < EPS) {
-      inVoxelNormals[i][2] = normalize(cross(inVoxelNormals[i][0], inVoxelNormals[i][1]));
-      basisVecExist[2] = false;
+    basisVecExist[0] = dot(inVoxelNormals[i][0], inVoxelNormals[i][0]) > EPS;
+    if (basisVecExist[0]) {
+      if (std::abs(dot(inVoxelNormals[i][0], inVoxelNormals[i][1])) > 1 - EPS || length(inVoxelNormals[i][1]) < EPS) {
+        inVoxelNormals[i][1] = (std::abs(inVoxelNormals[i][0].x) > 0.5) ? float3(0, 1, 0) : float3(1, 0, 0);
+        float3 basisVec3 = cross(inVoxelNormals[i][0], inVoxelNormals[i][1]);
+        inVoxelNormals[i][1] = normalize(cross(basisVec3, inVoxelNormals[i][0]));
+        basisVecExist[1] = false;
+      }
+      if (std::abs(dot(inVoxelNormals[i][2], normalize(cross(inVoxelNormals[i][1], inVoxelNormals[i][0])))) < EPS || length(inVoxelNormals[i][2]) < EPS) {
+        inVoxelNormals[i][2] = normalize(cross(inVoxelNormals[i][0], inVoxelNormals[i][1]));
+        basisVecExist[2] = false;
+      }
+    } else {
+      basisVecExist[1] = basisVecExist[2] = false;
     }
 
     float4x4 normalsMat4x4;

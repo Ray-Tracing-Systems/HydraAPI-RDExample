@@ -14,5 +14,5 @@ void main() {
   outColor = texture(texSampler, fragTexCoord) * vec4(fragColor, 1);
   if (outColor.w == 0)
     discard;
-  outNormal = fragNormal_emissionMult;
+  outNormal = vec4(normalize(fragNormal_emissionMult.xyz), fragNormal_emissionMult.w);
 }
