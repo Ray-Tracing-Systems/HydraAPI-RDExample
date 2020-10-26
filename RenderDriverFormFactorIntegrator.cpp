@@ -792,7 +792,7 @@ bool RD_FFIntegrator::UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t
   return true;
 }
 
-void merge_ff(std::vector<uint32_t>& voxels,
+void merge_ff_by_polygon(std::vector<uint32_t>& voxels,
   std::vector<float3>& colors,
   std::vector<float3>& emission,
   std::vector<float3>& normals,
@@ -865,6 +865,157 @@ void merge_ff(std::vector<uint32_t>& voxels,
   normals = std::move(compressedNormals);
   squares = std::move(compressedSqaures);
   ff = std::move(compressedFF);
+}
+
+template <typename T>
+T pow2(T x) {
+  return x * x;
+}
+
+float lengthSq(const float3& a) {
+  return pow2(a.x) + pow2(a.y) + pow2(a.z);
+}
+
+void merge_ff_by_ff_values(std::vector<uint32_t>& voxels,
+  std::vector<float3>& colors,
+  std::vector<float3>& emissions,
+  std::vector<float3>& normals,
+  std::vector<float>& squares,
+  std::vector<std::vector<std::pair<int, float>>>& ff)
+{
+  const uint32_t lastVoxId = *std::max_element(voxels.begin(), voxels.end()) + 1;
+  std::vector<std::vector<uint32_t>> clustering;
+  std::ofstream outVoxelsData("tmp_ff_dist.bin", std::ios::binary | std::ios::out);
+  outVoxelsData.write(reinterpret_cast<const char*>(&lastVoxId), sizeof(lastVoxId));
+  std::vector<std::vector<uint32_t>> patchesInVoxels(lastVoxId);
+  for (uint32_t voxelId = 0; voxelId < lastVoxId; ++voxelId) {
+    for (uint32_t patchId = 0; patchId < voxels.size(); ++patchId) {
+      if (voxels[patchId] == voxelId) {
+        patchesInVoxels[voxelId].push_back(patchId);
+      }
+    }
+    if (patchesInVoxels[voxelId].size() < 4) {
+      for (uint32_t patchId = 0; patchId < patchesInVoxels[voxelId].size(); ++patchId) {
+        std::vector<uint32_t> cluster(1, patchesInVoxels[voxelId][patchId]);
+        clustering.push_back(cluster);
+      }
+      const uint32_t ZERO = 0;
+      outVoxelsData.write(reinterpret_cast<const char*>(&ZERO), sizeof(ZERO));
+      continue;
+    }
+    std::vector<std::vector<float>> ffDistancesBetweenPatches(patchesInVoxels[voxelId].size());
+    for (uint32_t patchA = 0; patchA < patchesInVoxels[voxelId].size(); ++patchA) {
+      ffDistancesBetweenPatches[patchA].assign(patchesInVoxels[voxelId].size(), 0);
+    }
+    for (uint32_t patchA = 0; patchA < patchesInVoxels[voxelId].size(); ++patchA) {
+      for (uint32_t patchB = patchA + 1; patchB < patchesInVoxels[voxelId].size(); ++patchB) {
+        uint32_t ffAIdx = 0;
+        uint32_t ffBIdx = 0;
+        while (ffAIdx < ff[patchA].size() && ffBIdx < ff[patchB].size()) {
+          if (ff[patchA][ffAIdx].first < ff[patchB][ffBIdx].first) {
+            ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchA][ffAIdx].second * colors[patchA]);
+            ffAIdx++;
+          } else if (ff[patchA][ffAIdx].first > ff[patchB][ffBIdx].first) {
+            ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchB][ffBIdx].second * colors[patchB]);
+            ffBIdx++;
+          } else {
+            ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchA][ffAIdx].second * colors[patchA] - ff[patchB][ffBIdx].second * colors[patchB]);
+            ffAIdx++;
+            ffBIdx++;
+          }
+        }
+        while (ffAIdx < ff[patchA].size()) {
+          ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchA][ffAIdx].second * colors[patchA]);
+          ffAIdx++;
+        }
+        while (ffBIdx < ff[patchB].size()) {
+          ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchB][ffBIdx].second * colors[patchB]);
+          ffBIdx++;
+        }
+        ffDistancesBetweenPatches[patchB][patchA] = ffDistancesBetweenPatches[patchA][patchB];
+      }
+    }
+    {
+      const uint32_t patchesInVoxelsCount = static_cast<uint32_t>(patchesInVoxels[voxelId].size());
+      outVoxelsData.write(reinterpret_cast<const char*>(&patchesInVoxelsCount), sizeof(patchesInVoxelsCount));
+      for (const auto& ffDistLine : ffDistancesBetweenPatches) {
+        for (const float dist : ffDistLine) {
+          outVoxelsData.write(reinterpret_cast<const char*>(&dist), sizeof(dist));
+        }
+      }
+    }
+  }
+  outVoxelsData.close();
+  int code = system("python merge_voxels.py");
+  assert(code == 0);
+  std::ifstream inClusteringData("tmp_clust_data.bin", std::ios::binary | std::ios::in);
+  for (uint32_t voxelId = 0; voxelId < lastVoxId; ++voxelId) {
+    if (patchesInVoxels[voxelId].size() < 4) {
+      continue;
+    }
+    std::array<std::vector<uint32_t>, 3> inVoxelClustering;
+    {
+      for (auto& cluster : inVoxelClustering) {
+        uint32_t ptInCluster;
+        inClusteringData.read(reinterpret_cast<char*>(&ptInCluster), sizeof(ptInCluster));
+        cluster.resize(ptInCluster);
+        for (auto& patchId : cluster) {
+          uint32_t localPatchId;
+          inClusteringData.read(reinterpret_cast<char*>(&localPatchId), sizeof(localPatchId));
+          patchId = patchesInVoxels[voxelId][localPatchId];
+        }
+      }
+    }
+    clustering.insert(clustering.end(), inVoxelClustering.begin(), inVoxelClustering.end());
+  }
+  inClusteringData.close();
+
+  std::vector<uint32_t> mergedVoxels(clustering.size());
+  std::vector<float3> mergedColors(clustering.size());
+  std::vector<float3> mergedEmission(clustering.size());
+  std::vector<float3> mergedNormals(clustering.size());
+  std::vector<float> mergedSquares(clustering.size());
+  std::vector<std::vector<std::pair<int, float>>> mergedFF(clustering.size());
+  std::vector<uint32_t> invClustering(voxels.size());
+  for (uint32_t clusterId = 0; clusterId < clustering.size(); ++clusterId) {
+    for (auto patchId : clustering[clusterId]) {
+      invClustering[patchId] = clusterId;
+    }
+  }
+  for (uint32_t clusterId = 0; clusterId < clustering.size(); ++clusterId) {
+    mergedVoxels[clusterId] = voxels[clustering[clusterId][0]];
+    float3 color = float3(0, 0, 0);
+    float3 emission = float3(0, 0, 0);
+    float3 normal = float3(0, 0, 0);
+    float square = 0;
+    std::vector<float> ffRow(clustering.size(), 0.0f);
+    for (uint32_t patchId = 0; patchId < clustering[clusterId].size(); ++patchId) {
+      const uint32_t initialId = clustering[clusterId][patchId];
+      color += colors[initialId] * squares[initialId];
+      emission += emissions[initialId] * squares[initialId];
+      normal += normals[initialId] * squares[initialId];
+      square += squares[initialId];
+      for (auto [idx, value] : ff[initialId]) {
+        ffRow[invClustering[idx]] += value * squares[initialId];
+      }
+    }
+    mergedColors[clusterId] = color / square;
+    mergedEmission[clusterId] = emission / square;
+    mergedNormals[clusterId] = normalize(normal / square);
+    mergedSquares[clusterId] = square;
+    for (uint32_t newPatchId = 0; newPatchId < ffRow.size(); ++newPatchId) {
+      const float ffValue = ffRow[newPatchId] / square;
+      if (ffValue > 1e-9f) {
+        mergedFF[clusterId].emplace_back(newPatchId, ffValue);
+      }
+    }
+  }
+  voxels = mergedVoxels;
+  colors = mergedColors;
+  emissions = mergedEmission;
+  normals = mergedNormals;
+  squares = mergedSquares;
+  ff = mergedFF;
 }
 
 static float2 computeHSfromRGB(const float3& color_rgb) {
@@ -987,7 +1138,8 @@ void RD_FFIntegrator::EndScene() {
     normals[i] = to_float3(instanceTriangles[i].normal.value()[0]);
   }
 
-  merge_ff(voxels, colors, emission, normals, squares, FF);
+  merge_ff_by_polygon(voxels, colors, emission, normals, squares, FF);
+  merge_ff_by_ff_values(voxels, colors, emission, normals, squares, FF);
 
   auto lighting = ComputeLightingClassic(emission, colors);
   //auto lighting = ComputeLightingRandom(emission, colors);
