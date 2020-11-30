@@ -32,6 +32,7 @@ struct RD_FFIntegrator : public IHRRenderDriver {
   bool UpdateSettings(pugi::xml_node) override { return false; }
   void BeginScene(pugi::xml_node a_sceneNode) override;
   void ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator::Triangle>& triangles, const std::vector<float>& squares);
+  void ComputeFF_voxelized(uint32_t quadsCount, std::vector<RD_FFIntegrator::Triangle>& triangles, const std::vector<float>& squares);
   std::vector<HydraLiteMath::float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<HydraLiteMath::float3>& emission, const std::vector<HydraLiteMath::float3>& colors);
   std::vector<HydraLiteMath::float3> RD_FFIntegrator::ComputeLightingRandom(const std::vector<HydraLiteMath::float3>& emission, const std::vector<HydraLiteMath::float3>& colors);
   void EndScene() override;

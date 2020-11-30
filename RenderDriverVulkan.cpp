@@ -1656,7 +1656,7 @@ void RD_Vulkan::createLightingBuffer() {
     voxelsGridColors[i][2] = float4(colors[0].z, colors[1].z, colors[2].z, 0);
   }
   for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
-    std::array<float4, 4> matrix;
+    std::array<float4, PATCHES_IN_VOXEL> matrix;
     for (uint32_t j = 0; j < PATCHES_IN_VOXEL; ++j) {
       VoxelGridLightingIn.read(reinterpret_cast<char*>(&matrix[j]), sizeof(matrix[j]));
       voxelsGridWeightMats[i][j] = matrix[j];

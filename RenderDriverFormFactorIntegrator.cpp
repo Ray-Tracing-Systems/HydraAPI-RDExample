@@ -24,6 +24,8 @@ static HRCameraRef  camRef;
 static HRSceneInstRef scnRef;
 static std::unordered_map<std::wstring, std::wstring> camParams;
 
+const float PI = 3.14159265359f;
+
 IHRRenderDriver* CreateFFIntegrator_RenderDriver()
 {
   return new RD_FFIntegrator;
@@ -238,6 +240,13 @@ float2 hammersley2d(uint32_t i, uint32_t N) {
   return float2(float(i) / float(N), radicalInverse_VdC(i));
 }
 
+float3 hemisphereSample_uniform(float u, float v) {
+  float phi = v * 2.0f * PI;
+  float cosTheta = 1.0f - u;
+  float sinTheta = std::sqrt(1.0f - cosTheta * cosTheta);
+  return float3(std::cos(phi) * sinTheta, std::sin(phi) * sinTheta, cosTheta);
+}
+
 const uint32_t SAMPLES_PACKET_SIZE_S = 4;
 const uint32_t SAMPLES_PACKET_SIZE_M = 8;
 const uint32_t SAMPLES_PACKET_SIZE_L = 16;
@@ -436,6 +445,148 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
 {
   FF.resize(quadsCount);
 
+  std::wstring ffFilename = DataConfig::get().getBinFilePath(L"FF_vox.bin");
+  std::ifstream fin(ffFilename, std::ios::binary);
+  if (fin.is_open()) {
+    uint32_t countFromFile = 0;
+    uint32_t ffVersion = 0;
+    fin.read(reinterpret_cast<char*>(&ffVersion), sizeof(ffVersion));
+    if (ffVersion == DataConfig::FF_VERSION) {
+      fin.read(reinterpret_cast<char*>(&countFromFile), sizeof(countFromFile));
+      assert(countFromFile == quadsCount);
+      for (uint32_t i = 0; i < quadsCount; ++i) {
+        uint32_t rowSize;
+        fin.read(reinterpret_cast<char*>(&rowSize), sizeof(rowSize));
+        FF[i].resize(rowSize);
+        float rowSum = 0;
+        for (uint32_t j = 0; j < rowSize; ++j) {
+          uint32_t idx;
+          float value;
+          fin.read(reinterpret_cast<char*>(&idx), sizeof(idx));
+          fin.read(reinterpret_cast<char*>(&value), sizeof(value));
+          FF[i][j].first = idx;
+          FF[i][j].second = value;
+          assert(value <= 1 && "Too big FF");
+          rowSum += value;
+        }
+      }
+      fin.close();
+      return;
+    } else {
+      fin.close();
+    }
+  }
+  std::ofstream fout(ffFilename, std::ios::binary);
+
+  std::vector<SamplesPacket> samples = gen_samples(instanceTriangles);
+
+  EmbreeTracer tracer(triangles);
+
+  omp_set_dynamic(0);
+
+  std::vector<uint32_t> patchesToProcess(quadsCount);
+  std::vector<Sample> patchesToCompute(quadsCount);
+  std::vector<uint16_t> occlRes(quadsCount);
+
+  for (int i = 0; i < static_cast<int>(quadsCount) - 1; ++i) {
+    //Timer timer("row", i);
+    if (100 * i / quadsCount < 100 * (i + 1) / quadsCount) {
+      std::cout << 100 * (i + 1) / quadsCount << "% finished" << std::endl;
+    }
+    const SamplesPacket& samples1 = samples[i];
+
+    patchesToProcess.clear();
+    for (uint32_t j = i + 1; j < quadsCount; ++j) {
+      const SamplesPacket& samples2 = samples[j];
+      const float3 posToPos = samples1[0].pos - samples2[0].pos;
+      if (!(dot(samples1[0].normal, posToPos) >= 0 || dot(samples2[0].normal, posToPos) <= 0)) {
+        patchesToProcess.push_back(j);
+      }
+    }
+
+#pragma omp parallel for num_threads(8)
+    for (int idx = 0; idx < patchesToProcess.size(); ++idx) {
+      int j = patchesToProcess[idx];
+      const SamplesPacket& samples2 = samples[j];
+
+      auto occluded = tracer.traceRays(samples1, samples2);
+      bool fullOcclusion = true;
+      for (auto occl : occluded) {
+        fullOcclusion &= (occl == 0xFFFF);
+      }
+      if (fullOcclusion) {
+        continue;
+      }
+      float value = 0;
+      int samplesCount = 0;
+      for (int k = 0, occlValue = 0; k < samples1.size(); ++k) {
+        const Sample& sample1 = samples1[k];
+        for (int h = 0; h < samples2.size(); ++h, occlValue++) {
+          const Sample& sample2 = samples2[h];
+          if ((occluded[occlValue / RT_PACKET_SIZE] & (1 << (occlValue % RT_PACKET_SIZE))) != 0) {
+            samplesCount++;
+            continue;
+          }
+          const float3 r = sample1.pos - sample2.pos;
+          const float lengthSq = dot(r, r);
+          if (lengthSq < 1e-10) {
+            continue;
+          }
+          const float l = std::sqrt(lengthSq);
+          const float invL = 1 / l;
+          const float3 toSample = r * invL;
+          const float theta1 = max(-dot(sample1.normal, toSample), 0.f);
+          const float theta2 = max(dot(sample2.normal, toSample), 0.f);
+          value += theta1 * theta2 * invL * invL;
+          samplesCount++;
+        }
+      }
+      if (samplesCount > 0) {
+        value /= samplesCount * 3.14f;
+      }
+#pragma omp critical
+      if (value > 1e-9) {
+        const float val1 = value * squares[j];
+        const float val2 = value * squares[i];
+        if (val1 > 1e-9) {
+          FF[i].emplace_back(j, min(val1, 1));
+        }
+        if (val2 > 1e-9) {
+          FF[j].emplace_back(i, min(val2, 1));
+        }
+      }
+    }
+    std::sort(FF[i].begin(), FF[i].end());
+    float rowSum = 1e-9f;
+    for (const auto& elem : FF[i]) {
+      rowSum += elem.second;
+    }
+    if (rowSum > 1.0f) {
+      for (auto& elem : FF[i]) {
+        elem.second /= rowSum;
+      }
+    }
+  }
+
+  fout.write(reinterpret_cast<const char*>(&DataConfig::FF_VERSION), sizeof(DataConfig::FF_VERSION));
+  fout.write(reinterpret_cast<const char*>(&quadsCount), sizeof(quadsCount));
+  for (uint32_t i = 0; i < quadsCount; ++i) {
+    uint32_t rowSize = static_cast<uint32_t>(FF[i].size());
+    fout.write(reinterpret_cast<char*>(&rowSize), sizeof(rowSize));
+    for (auto it = FF[i].begin(); it != FF[i].end(); ++it) {
+      uint32_t idx = it->first;
+      float value = it->second;
+      fout.write(reinterpret_cast<char*>(&idx), sizeof(idx));
+      fout.write(reinterpret_cast<char*>(&value), sizeof(value));
+    }
+  }
+  fout.close();
+}
+
+void RD_FFIntegrator::ComputeFF_voxelized(uint32_t quadsCount, std::vector<RD_FFIntegrator::Triangle>& triangles, const std::vector<float>& squares)
+{
+  FF.resize(quadsCount);
+
   std::wstring ffFilename = DataConfig::get().getBinFilePath(L"FF.bin");
   std::ifstream fin(ffFilename, std::ios::binary);
   if (fin.is_open()) {
@@ -464,7 +615,8 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
       }
       fin.close();
       return;
-    } else {
+    }
+    else {
       fin.close();
     }
   }
@@ -894,6 +1046,15 @@ void merge_ff_by_ff_values(std::vector<uint32_t>& voxels,
         patchesInVoxels[voxelId].push_back(patchId);
       }
     }
+    float maxSquare = 0.0;
+    for (uint32_t patchId = 0; patchId < patchesInVoxels[voxelId].size(); ++patchId) {
+      maxSquare = max(maxSquare, squares[patchesInVoxels[voxelId][patchId]]);
+    }
+    const float filterThreshold = maxSquare / 100.0f;
+    auto newEnd = std::remove_if(patchesInVoxels[voxelId].begin(), patchesInVoxels[voxelId].end(), [&squares, filterThreshold](uint32_t patchId) {
+      return squares[patchId] < filterThreshold;
+    });
+    patchesInVoxels[voxelId].erase(newEnd, patchesInVoxels[voxelId].end());
     if (patchesInVoxels[voxelId].size() < 4) {
       for (uint32_t patchId = 0; patchId < patchesInVoxels[voxelId].size(); ++patchId) {
         std::vector<uint32_t> cluster(1, patchesInVoxels[voxelId][patchId]);
@@ -913,25 +1074,27 @@ void merge_ff_by_ff_values(std::vector<uint32_t>& voxels,
         uint32_t ffBIdx = 0;
         while (ffAIdx < ff[patchA].size() && ffBIdx < ff[patchB].size()) {
           if (ff[patchA][ffAIdx].first < ff[patchB][ffBIdx].first) {
-            ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchA][ffAIdx].second * colors[patchA]);
+            ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchA][ffAIdx].second * colors[patchA] / squares[ff[patchA][ffAIdx].first]);
             ffAIdx++;
           } else if (ff[patchA][ffAIdx].first > ff[patchB][ffBIdx].first) {
-            ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchB][ffBIdx].second * colors[patchB]);
+            ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchB][ffBIdx].second * colors[patchB] / squares[ff[patchB][ffBIdx].first]);
             ffBIdx++;
           } else {
-            ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchA][ffAIdx].second * colors[patchA] - ff[patchB][ffBIdx].second * colors[patchB]);
+            ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchA][ffAIdx].second * colors[patchA] / squares[ff[patchA][ffAIdx].first] - ff[patchB][ffBIdx].second * colors[patchB] / squares[ff[patchB][ffBIdx].first]);
             ffAIdx++;
             ffBIdx++;
           }
         }
         while (ffAIdx < ff[patchA].size()) {
-          ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchA][ffAIdx].second * colors[patchA]);
+          ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchA][ffAIdx].second * colors[patchA] / squares[ff[patchA][ffAIdx].first]);
           ffAIdx++;
         }
         while (ffBIdx < ff[patchB].size()) {
-          ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchB][ffBIdx].second * colors[patchB]);
+          ffDistancesBetweenPatches[patchA][patchB] += lengthSq(ff[patchB][ffBIdx].second * colors[patchB] / squares[ff[patchB][ffBIdx].first]);
           ffBIdx++;
         }
+        //ffDistancesBetweenPatches[patchA][patchB] = lengthSq(normals[patchA] * squares[patchA] - normals[patchB] * squares[patchB]);
+        //ffDistancesBetweenPatches[patchA][patchB] = -ffDistancesBetweenPatches[patchA][patchB];
         ffDistancesBetweenPatches[patchB][patchA] = ffDistancesBetweenPatches[patchA][patchB];
       }
     }
@@ -1029,10 +1192,12 @@ static float2 computeHSfromRGB(const float3& color_rgb) {
   if (maxCh == color_rgb.x) {
     if (color_rgb.y >= color_rgb.z) {
       return float2((color_rgb.y - color_rgb.z) * scale / 6.f, S);
-    } else {
+    }
+    else {
       return float2((color_rgb.y - color_rgb.z) * scale / 6.f + 1.f, S);
     }
-  } else if (maxCh == color_rgb.y) {
+  }
+  else if (maxCh == color_rgb.y) {
     return float2((color_rgb.z - color_rgb.x) * scale / 6.f + 1.0f / 3.0f, S);
   }
   return float2((color_rgb.x - color_rgb.y) * scale / 6.f + 2.0f / 3.0f, S);
@@ -1151,6 +1316,8 @@ void RD_FFIntegrator::EndScene() {
 
   for (uint32_t i = 0; i < lighting.size(); ++i) {
     const uint32_t voxelId = voxels[i];
+    if (voxelId == 360)
+      std::cout << "Lighting[i]: " << i << std::endl;
     float square = squares[i];
     float3 light = lighting[i];
     float3 normal = normals[i];
@@ -1187,15 +1354,22 @@ void RD_FFIntegrator::EndScene() {
       basisVecExist[1] = basisVecExist[2] = false;
     }
 
-    float4x4 normalsMat4x4;
-    for (uint32_t j = 0; j < 3; ++j) {
-      normalsMat4x4.row[j] = to_float4(inVoxelNormals[i][j], 0);
+    std::array<float2, 3> normalsIn2d;
+    for (uint32_t j = 0; j < normalsIn2d.size(); ++j) {
+      normalsIn2d[j] = getAnglesForNormal(inVoxelNormals[i][j]);
     }
+    
+
+    float4x4 normalsMat4x4;
+    normalsMat4x4.row[0] = float4(normalsIn2d[0].x, normalsIn2d[1].x, normalsIn2d[2].x, 0);
+    normalsMat4x4.row[1] = float4(normalsIn2d[0].y, normalsIn2d[1].y, normalsIn2d[2].y, 0);
+    normalsMat4x4.row[2] = float4(1, 1, 1, 0);
     normalsMat4x4.row[3] = float4(0, 0, 0, 1);
     float4x4 weightMat4x4 = inverse4x4(normalsMat4x4);
     for (uint32_t j = 0; j < 3; ++j) {
-      inVoxelWeightMatrix[i][j] = weightMat4x4.row[j];
-      inVoxelWeightMatrix[i][j].w = basisVecExist[j] ? 1.f : 0.f;
+      //inVoxelWeightMatrix[i][j] = weightMat4x4.row[j];
+      //inVoxelWeightMatrix[i][j].w = basisVecExist[j] ? 1.0f : 0.0f;
+      inVoxelWeightMatrix[i][j] = to_float4(inVoxelNormals[i][j], basisVecExist[j] ? 1.0f : 0.0f);
     }
   }
   std::ofstream VoxelGridLightingOut(DataConfig::get().getBinFilePath(L"VoxelGridLighting.bin"), std::ios::binary | std::ios::out);

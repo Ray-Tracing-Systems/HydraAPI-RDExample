@@ -36,14 +36,25 @@ float saturate(float a) {
   return clamp(a, 0, 1);
 }
 
+const float PI = 3.14159265359f;
+
+vec2 getAnglesForNormal(vec3 normal) {
+  return vec2(acos(normal.z), atan(normal.y, normal.x));
+}
+
 vec3 sampleLighting(vec3 worldPos, vec3 normal) {
-  vec3 locIdx = (worldPos - bmin) / (bmax - bmin) * gridSize;
+  vec3 locIdx = (worldPos - bmin) / (bmax - bmin) * gridSize - 0.5f;
+  locIdx = clamp(locIdx, vec3(0, 0, 0), gridSize - 1);
   uvec3 idx = uvec3(locIdx);
   uint flatIndices[8];
   flatIndices[0] = idx.x + idx.y * gridSize.x + idx.z * gridSize.x * gridSize.y;
+  for (int i = 0; i < 8; ++i) {
+    flatIndices[i] = idx.x + (i & 1) + (idx.y + ((i & 2)  >> 1)) * gridSize.x + (idx.z + ((i & 4) >> 2)) * gridSize.x * gridSize.y;
+  }
 
   vec3 lerps = vec3(0, 0, 0);
-  if (uint(locIdx.x + 0.5) > idx.x) {
+  lerps = locIdx - idx;
+  /*if (uint(locIdx.x + 0.5) > idx.x) {
     flatIndices[1] = (idx.x + 1 == gridSize.x) ? flatIndices[0] : flatIndices[0] + 1;
     lerps.x = locIdx.x - idx.x - 0.5;
   }
@@ -81,31 +92,40 @@ vec3 sampleLighting(vec3 worldPos, vec3 normal) {
     flatIndices[2] = (idx.z == 0) ? flatIndices[2] : flatIndices[2] - gridSize.x * gridSize.y;
     flatIndices[3] = (idx.z == 0) ? flatIndices[3] : flatIndices[3] - gridSize.x * gridSize.y;
     lerps.z = locIdx.z - idx.z + 0.5;
-  }
+  }*/
   vec3 lighting[8];
   float byNormalWeights[8];
-  vec3 testWeights[8];
+  normal = normalize(normal);
   for (uint i = 0; i < 8; ++i) {
-    vec3 row0 = lightingWeightsBuffer[3 * flatIndices[i] + 0].xyz;
-    vec3 row1 = lightingWeightsBuffer[3 * flatIndices[i] + 1].xyz;
-    vec3 row2 = lightingWeightsBuffer[3 * flatIndices[i] + 2].xyz;
+    vec4 row0 = lightingWeightsBuffer[3 * flatIndices[i] + 0];
+    vec4 row1 = lightingWeightsBuffer[3 * flatIndices[i] + 1];
+    vec4 row2 = lightingWeightsBuffer[3 * flatIndices[i] + 2];
+    //vec3 inNormalSpaceCoords = vec3(getAnglesForNormal(normal), 1.0);
+    //vec3 baricentric = vec3(dot(row0.xyz, inNormalSpaceCoords), dot(row1.xyz, inNormalSpaceCoords), dot(row2.xyz, inNormalSpaceCoords));
+    ////baricentric = inNormalSpaceCoords.x * row0.xyz + inNormalSpaceCoords.y * row1.xyz + inNormalSpaceCoords.z * row2.xyz;
+    //baricentric = clamp(baricentric, vec3(0.0), vec3(1.0));
+    //float sum = dot(baricentric, vec3(1, 1, 1));
+    //baricentric /= sum == 0 ? 1.0f : sum;
 
-    vec4 weights = vec4(
-      dot(vec3(row0.x, row1.x, row2.x), normal),
-      dot(vec3(row0.y, row1.y, row2.y), normal),
-      dot(vec3(row0.z, row1.z, row2.z), normal),
-      0);
+    vec3 weights = vec3(0, 0, 0);// baricentric;
+    weights.x = max(dot(row0.xyz, normal), 0.0);
+    weights.y = max(dot(row1.xyz, normal), 0.0);
+    weights.z = max(dot(row2.xyz, normal), 0.0);
+    float weightSum = dot(weights, vec3(1, 1, 1));
+    bool zeroWeights = weightSum < 1e-5;
+    if (weightSum > 1.0f)
+      weights /= weightSum;
 
-    weights = max(weights, 0);
-    weights = min(weights, 1);
+    byNormalWeights[i] = zeroWeights ? 1.0 : max(row0.w, max(row1.w, row2.w));// max(weights.x * row0.w, max(weights.y * row1.w, weights.z * row2.w));
+    //byNormalWeights[i] = zeroWeights ? 1.0 : dot(vec3(row0.w, row1.w, row2.w), weights);// max(weights.x * row0.w, max(weights.y * row1.w, weights.z * row2.w));
+    //byNormalWeights[i] = max(weights.x * row0.w, max(weights.y * row1.w, weights.z * row2.w));
+    //byNormalWeights[i] = max(weights.x, max(weights.y, weights.z));
 
-    testWeights[i] = weights.xyz;
-    byNormalWeights[i] = max(weights.x * lightingWeightsBuffer[3 * flatIndices[i] + 0].w, max(weights.y * lightingWeightsBuffer[3 * flatIndices[i] + 1].w, weights.z * lightingWeightsBuffer[3 * flatIndices[i] + 2].w));
-
-    lighting[i].x = dot(lightingBuffer[3 * flatIndices[i] + 0], weights);
-    lighting[i].y = dot(lightingBuffer[3 * flatIndices[i] + 1], weights);
-    lighting[i].z = dot(lightingBuffer[3 * flatIndices[i] + 2], weights);
+    lighting[i].x = dot(lightingBuffer[3 * flatIndices[i] + 0].rgb, weights);
+    lighting[i].y = dot(lightingBuffer[3 * flatIndices[i] + 1].rgb, weights);
+    lighting[i].z = dot(lightingBuffer[3 * flatIndices[i] + 2].rgb, weights);
   }
+  //return lighting[0];
   for (uint i = 0; i < 8; i += 2) {
     lighting[i] = mix(lighting[i], lighting[i + 1], vec3(min(max(1 - byNormalWeights[i], lerps.x), byNormalWeights[i + 1])));
     byNormalWeights[i] = max(byNormalWeights[i], byNormalWeights[i + 1]);
