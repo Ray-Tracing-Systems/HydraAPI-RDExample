@@ -230,6 +230,7 @@ protected:
     VkDescriptorSetLayout descriptorSetLayout = {};
     uint32_t rtCount = 1;
     std::vector<VkPushConstantRange> pushConstants;
+    VkPrimitiveTopology primitiveTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
   };
 
   struct DirectLightTemplate {
@@ -278,6 +279,7 @@ protected:
   void createVertexBuffer();
   void createIndexBuffer();
   void prepareCommandBuffers();
+  void prepareDebugPoints();
 
   std::wstring m_libPath;
 
@@ -323,10 +325,12 @@ protected:
   VkDescriptorSetLayout descriptorSetLayout;
   VkPipelineLayout gbufferPipelineLayout;
   VkPipelineLayout pipelineLayout;
+  VkPipelineLayout debugPointsPipelineLayout;
   VkRenderPass gbufferRenderPass;
   VkRenderPass resolveRenderPass;
   VkPipeline graphicsPipeline;
   VkPipeline resolvePipeline;
+  VkPipeline debugPointsPipeline;
   VkCommandPool commandPool;
 
   VkImage depthImage;
@@ -368,6 +372,10 @@ protected:
   VkDeviceMemory globalVertexBufferMemory = {};
   VkBuffer globalIndexBuffer = {};
   VkDeviceMemory globalIndexBufferMemory = {};
+
+  VkBuffer debugPointsVertexBuffer = {};
+  VkDeviceMemory debugPointsVertexBufferMemory = {};
+  uint32_t debugPointsCount = 0;
 
   std::vector<Vertex> vertices;
   std::vector<uint32_t> indices;

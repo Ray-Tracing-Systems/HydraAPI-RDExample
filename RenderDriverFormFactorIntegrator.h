@@ -20,6 +20,13 @@ struct RD_FFIntegrator : public IHRRenderDriver {
   using Triangle = Polygon<3>;
   using Quad = Polygon<4>;
 
+  struct VoxelGeom
+  {
+    std::vector<Triangle> triangles;
+    std::vector<float> squares;
+    HydraLiteMath::float3 center;
+  };
+
   void ClearAll() override {}
   HRDriverAllocInfo AllocAll(HRDriverAllocInfo a_info) override { return a_info; }
   bool UpdateImage(int32_t a_texId, int32_t w, int32_t h, int32_t bpp, const void* a_data, pugi::xml_node a_texNode) override;
@@ -32,7 +39,14 @@ struct RD_FFIntegrator : public IHRRenderDriver {
   bool UpdateSettings(pugi::xml_node) override { return false; }
   void BeginScene(pugi::xml_node a_sceneNode) override;
   void ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator::Triangle>& triangles, const std::vector<float>& squares);
-  void ComputeFF_voxelized(uint32_t quadsCount, std::vector<RD_FFIntegrator::Triangle>& triangles, const std::vector<float>& squares);
+  void ComputeFF_voxelized(
+    std::vector<RD_FFIntegrator::Triangle>& triangles,
+    const std::vector<float>& squares,
+    const std::vector<HydraLiteMath::float3>& voxels_centers,
+    float voxel_size,
+    std::vector<HydraLiteMath::float3>& color,
+    std::vector<HydraLiteMath::float3>& emission,
+    std::vector<HydraLiteMath::float3>& normal);
   std::vector<HydraLiteMath::float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<HydraLiteMath::float3>& emission, const std::vector<HydraLiteMath::float3>& colors);
   std::vector<HydraLiteMath::float3> RD_FFIntegrator::ComputeLightingRandom(const std::vector<HydraLiteMath::float3>& emission, const std::vector<HydraLiteMath::float3>& colors);
   void EndScene() override;
@@ -51,6 +65,7 @@ struct RD_FFIntegrator : public IHRRenderDriver {
 
   std::map<int, std::vector<Triangle>> meshTriangles;
   std::vector<Triangle> instanceTriangles;
+  std::vector<uint32_t> virtualPatchVoxelId;
   std::vector<std::vector<std::pair<int, float>>> FF;
 
   std::vector<Quad> bigQuads;

@@ -26,6 +26,11 @@ static std::unordered_map<std::wstring, std::wstring> camParams;
 
 const float PI = 3.14159265359f;
 
+template <typename T>
+T pow2(T x) {
+  return x * x;
+}
+
 IHRRenderDriver* CreateFFIntegrator_RenderDriver()
 {
   return new RD_FFIntegrator;
@@ -220,6 +225,14 @@ struct Sample {
   float3 pos, normal;
 };
 
+struct FFSample {
+  float3 pos, normal;
+  float3 color;
+  float square;
+  float3 emission;
+  uint32_t primId;
+};
+
 template <typename T>
 T lerpSquare(T p1, T p2, T p3, T p4, float x, float y) {
   T x1_pos = lerp(p1, p2, x);
@@ -240,9 +253,10 @@ float2 hammersley2d(uint32_t i, uint32_t N) {
   return float2(float(i) / float(N), radicalInverse_VdC(i));
 }
 
-float3 hemisphereSample_uniform(float u, float v) {
-  float phi = v * 2.0f * PI;
-  float cosTheta = 1.0f - u;
+float3 hemisphereSample_uniform(float2 uv) {
+  float phi = uv.y * 2.0f * PI;
+  float cosTheta = 1.0f - uv.x;
+  cosTheta = std::cos(2.0f * PI * uv.x);
   float sinTheta = std::sqrt(1.0f - cosTheta * cosTheta);
   return float3(std::cos(phi) * sinTheta, std::sin(phi) * sinTheta, cosTheta);
 }
@@ -251,12 +265,15 @@ const uint32_t SAMPLES_PACKET_SIZE_S = 4;
 const uint32_t SAMPLES_PACKET_SIZE_M = 8;
 const uint32_t SAMPLES_PACKET_SIZE_L = 16;
 const uint32_t SAMPLES_PACKET_SIZE_XL = 32;
+const uint32_t SAMPLES_PACKET_SIZE_XXL = 128;
 
-const uint32_t SAMPLES_PACKET_SIZE = SAMPLES_PACKET_SIZE_L;
+const uint32_t SAMPLES_PACKET_SIZE = SAMPLES_PACKET_SIZE_XXL;
 const uint32_t SAMPLES_PAIRS = SAMPLES_PACKET_SIZE * SAMPLES_PACKET_SIZE;
 const uint32_t RT_PACKET_SIZE = 16;
 static_assert(SAMPLES_PAIRS % RT_PACKET_SIZE == 0);
 const uint32_t WORDS_FOR_OCCLUSION = (SAMPLES_PAIRS + RT_PACKET_SIZE - 1) / RT_PACKET_SIZE;
+
+const uint32_t WORDS_FOR_SAMPLES = (SAMPLES_PACKET_SIZE + RT_PACKET_SIZE - 1) / RT_PACKET_SIZE;
 
 using SamplesPacket = std::array<Sample, SAMPLES_PACKET_SIZE>;
 
@@ -435,6 +452,103 @@ public:
     return result;
   }
 
+  std::vector<uint16_t> traceRays(const std::vector<FFSample>& samples1, const std::vector<FFSample>& samples2) {
+    const uint32_t samplesPairs = static_cast<uint32_t>(samples1.size() * samples2.size());
+    const uint32_t samplesWords = (samplesPairs + 15) / 16;
+    std::vector<uint16_t> result(samplesWords, 0);
+    std::vector<RTCRay16> raysPacket(samplesWords);
+    for (int i = 0, target_id = 0; i < samples1.size(); ++i) {
+      const FFSample& s1 = samples1[i];
+      for (int j = 0; j < samples2.size(); ++j, ++target_id) {
+        const uint32_t packet_id = target_id / RT_PACKET_SIZE;
+        const uint32_t sampleInPacket = target_id % RT_PACKET_SIZE;
+        const FFSample& s2 = samples2[j];
+        const float BIAS = 1e-6f;
+        float3 dir = s2.pos - s1.pos;
+        raysPacket[packet_id].org_x[sampleInPacket] = s1.pos.x;
+        raysPacket[packet_id].org_y[sampleInPacket] = s1.pos.y;
+        raysPacket[packet_id].org_z[sampleInPacket] = s1.pos.z;
+        raysPacket[packet_id].tnear[sampleInPacket] = BIAS;
+        raysPacket[packet_id].dir_x[sampleInPacket] = dir.x;
+        raysPacket[packet_id].dir_y[sampleInPacket] = dir.y;
+        raysPacket[packet_id].dir_z[sampleInPacket] = dir.z;
+        raysPacket[packet_id].tfar[sampleInPacket] = 1.f - BIAS;
+      }
+    }
+
+    const int validMask = ~0u;
+    for (uint32_t i = 0; i < samplesWords; ++i) {
+      rtcOccluded16(&validMask, Scene, &IntersectionContext, &raysPacket[i]); //CHECK_EMBREE
+      for (uint32_t k = 0; k < RT_PACKET_SIZE; ++k) {
+        if (std::isinf(raysPacket[i].tfar[k])) {
+          result[i] |= 1u << k;
+        }
+      }
+    }
+
+    return result;
+  }
+
+  std::vector<FFSample> traceRaysTo(const std::array<float3, SAMPLES_PACKET_SIZE>& dirs, const float3& target, const std::vector<float3>& colors, const std::vector<float3>& emissions, const std::vector<float>& squares, const std::vector<float3>& normals) {
+    // Generate positions
+    std::array<float3, SAMPLES_PACKET_SIZE> positions;
+    for (uint32_t i = 0; i < positions.size(); ++i) {
+      positions[i] = target - dirs[i];
+    }
+    // Fill packets to trace
+    const float BIAS = 1e-6f;
+    std::array<RTCRayHit16, WORDS_FOR_SAMPLES> rays;
+    std::vector<FFSample> samplesDEBUG;
+ /*   for (uint32_t i = 0; i < positions.size(); ++i) {
+      samplesDEBUG.push_back(FFSample{ positions[i], float3(1, 0, 0), float3(1, 0, 0), 0 });
+    }
+    return samplesDEBUG;*/
+    //samplesDEBUG.push_back(FFSample{ positions[0], float3(0, 0, 0), float3(0, 0, 0), 0 });
+    //return samplesDEBUG;
+    //samplesDEBUG.push_back(FFSample{ positions[0] + dirs[0] * 2.0f, float3(0, 0, 0), float3(0, 0, 0), 0 });
+    //return samplesDEBUG;
+    for (uint32_t packetId = 0, rayId = 0; packetId < rays.size(); ++packetId) {
+      for (uint32_t localId = 0; localId < RT_PACKET_SIZE && rayId < dirs.size(); ++localId, ++rayId) {
+        rays[packetId].ray.dir_x[localId] = dirs[rayId].x * 2;
+        rays[packetId].ray.dir_y[localId] = dirs[rayId].y * 2;
+        rays[packetId].ray.dir_z[localId] = dirs[rayId].z * 2;
+        rays[packetId].ray.tnear[localId] = BIAS;
+        rays[packetId].ray.org_x[localId] = positions[rayId].x;
+        rays[packetId].ray.org_y[localId] = positions[rayId].y;
+        rays[packetId].ray.org_z[localId] = positions[rayId].z;
+        rays[packetId].ray.tfar [localId] = 1.f + BIAS;
+      }
+    }
+    // Trace rays
+    const int validMask = ~0u;
+    for (uint32_t i = 0; i < WORDS_FOR_SAMPLES; ++i) {
+      rtcIntersect16(&validMask, Scene, &IntersectionContext, &rays[i]); CHECK_EMBREE
+    }
+    // Gather sampled results
+    std::vector<FFSample> samples;
+    for (uint32_t packetId = 0, rayId = 0; packetId < WORDS_FOR_SAMPLES; ++packetId) {
+      for (uint32_t localId = 0; localId < RT_PACKET_SIZE && rayId < dirs.size(); ++localId, ++rayId) {
+        // Skip no hit
+        if (std::isinf(rays[packetId].ray.tfar[localId]) || rays[packetId].ray.tfar[localId] >= 1.f + BIAS) {
+          continue;
+        }
+        // Skip back faces
+        const float3 normal = normalize(normals[rays[packetId].hit.primID[localId]]);
+        if (dot(normal, -dirs[rayId]) < 0.0) {
+          continue;
+        }
+        // Extract color and square by polygonId
+        const float3 color = colors[rays[packetId].hit.primID[localId]];
+        const float3 emission = emissions[rays[packetId].hit.primID[localId]];
+        const float square = squares[rays[packetId].hit.primID[localId]];
+        // Generate sample
+        const float3 position = positions[rayId] + 2.0f * dirs[rayId] * rays[packetId].ray.tfar[localId];
+        samples.push_back(FFSample{ position, normal, color, square, emission, rays[packetId].hit.primID[localId] });
+      }
+    }
+    return samples;
+  }
+
   ~EmbreeTracer() {
     rtcReleaseScene(Scene);
     rtcReleaseDevice(Device);
@@ -445,7 +559,7 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
 {
   FF.resize(quadsCount);
 
-  std::wstring ffFilename = DataConfig::get().getBinFilePath(L"FF_vox.bin");
+  std::wstring ffFilename = DataConfig::get().getBinFilePath(L"FF.bin");
   std::ifstream fin(ffFilename, std::ios::binary);
   if (fin.is_open()) {
     uint32_t countFromFile = 0;
@@ -583,20 +697,26 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
   fout.close();
 }
 
-void RD_FFIntegrator::ComputeFF_voxelized(uint32_t quadsCount, std::vector<RD_FFIntegrator::Triangle>& triangles, const std::vector<float>& squares)
+void RD_FFIntegrator::ComputeFF_voxelized(
+  std::vector<RD_FFIntegrator::Triangle>& triangles,
+  const std::vector<float>& squares,
+  const std::vector<float3>& voxels_centers,
+  float voxel_size,
+  std::vector<float3> &colors,
+  std::vector<float3> &emission,
+  std::vector<float3> &normals)
 {
-  FF.resize(quadsCount);
-
-  std::wstring ffFilename = DataConfig::get().getBinFilePath(L"FF.bin");
+  const uint32_t voxelsCount = static_cast<uint32_t>(voxels_centers.size());
+  std::wstring ffFilename = DataConfig::get().getBinFilePath(L"FF_vox.bin");
   std::ifstream fin(ffFilename, std::ios::binary);
-  if (fin.is_open()) {
+  if (fin.is_open() && false) {
     uint32_t countFromFile = 0;
     uint32_t ffVersion = 0;
     fin.read(reinterpret_cast<char*>(&ffVersion), sizeof(ffVersion));
     if (ffVersion == DataConfig::FF_VERSION) {
       fin.read(reinterpret_cast<char*>(&countFromFile), sizeof(countFromFile));
-      assert(countFromFile == quadsCount);
-      for (uint32_t i = 0; i < quadsCount; ++i) {
+      assert(countFromFile == voxelsCount);
+      for (uint32_t i = 0; i < voxelsCount; ++i) {
         uint32_t rowSize;
         fin.read(reinterpret_cast<char*>(&rowSize), sizeof(rowSize));
         FF[i].resize(rowSize);
@@ -622,36 +742,94 @@ void RD_FFIntegrator::ComputeFF_voxelized(uint32_t quadsCount, std::vector<RD_FF
   }
   std::ofstream fout(ffFilename, std::ios::binary);
 
-  std::vector<SamplesPacket> samples = gen_samples(instanceTriangles);
+  const float halfDiag = voxel_size * 0.5f;
+  std::array<float3, SAMPLES_PACKET_SIZE> hammDirs;
+  for (uint32_t i = 0; i < hammDirs.size(); ++i) {
+    const float u = static_cast<float>(rand()) / RAND_MAX;
+    const float v = static_cast<float>(rand()) / RAND_MAX;
+    const float theta = u * 2.0f * PI;
+    const float phi = 2.0f * v - 1.0f;
+    hammDirs[i] = normalize(float3(std::sqrt(1.0f - phi * phi) * std::cos(theta), std::sqrt(1.0f - phi * phi) * std::sin(theta), phi));
+    //hammDirs[i] = hemisphereSample_uniform(hammersley2d(i, static_cast<uint32_t>(hammDirs.size())));
+    const float dirLength = max(std::abs(hammDirs[i].x), max(std::abs(hammDirs[i].y), std::abs(hammDirs[i].z)));
+    hammDirs[i] *= halfDiag / dirLength;
+  }
 
+  // Generate samples for each voxel
+  std::vector<std::vector<FFSample>> samples(voxelsCount);
   EmbreeTracer tracer(triangles);
-
-  omp_set_dynamic(0);
-
-  std::vector<uint32_t> patchesToProcess(quadsCount);
-  std::vector<Sample> patchesToCompute(quadsCount);
-  std::vector<uint16_t> occlRes(quadsCount);
-
-  for (int i = 0; i < static_cast<int>(quadsCount) - 1; ++i) {
-    //Timer timer("row", i);
-    if (100 * i / quadsCount < 100 * (i + 1) / quadsCount) {
-      std::cout << 100 * (i + 1) / quadsCount << "% finished" << std::endl;
+  for (uint32_t i = 0; i < voxelsCount; ++i) {
+    // Trace rays from sphere surface to sphere center
+    samples[i] = tracer.traceRaysTo(hammDirs, voxels_centers[i], colors, emission, squares, normals);
+    std::unordered_map<uint32_t, uint32_t> primCounter;
+    for (const auto& sample : samples[i]) {
+      primCounter[sample.primId]++;
     }
-    const SamplesPacket& samples1 = samples[i];
-
-    patchesToProcess.clear();
-    for (uint32_t j = i + 1; j < quadsCount; ++j) {
-      const SamplesPacket& samples2 = samples[j];
-      const float3 posToPos = samples1[0].pos - samples2[0].pos;
-      if (!(dot(samples1[0].normal, posToPos) >= 0 || dot(samples2[0].normal, posToPos) <= 0)) {
-        patchesToProcess.push_back(j);
+    for (auto& sample : samples[i]) {
+      sample.square /= primCounter[sample.primId];
+    }
+    if (i == 4)
+    {
+      std::ofstream fout(DataConfig::get().getBinFilePath(L"debugPoints.bin"), std::ios::binary);
+      uint32_t samplesCount = static_cast<uint32_t>(samples[i].size());
+      fout.write(reinterpret_cast<char*>(&samplesCount), sizeof(samplesCount));
+      for (uint32_t j = 0; j < samplesCount; ++j) {
+        float3 color(1, 0, 0);
+        fout.write(reinterpret_cast<char*>(&samples[i][j].pos), sizeof(samples[i][j].pos));
+        //fout.write(reinterpret_cast<char*>(&samples[i][j].color), sizeof(samples[i][j].color));
+        fout.write(reinterpret_cast<char*>(&color), sizeof(color));
       }
+      fout.close();
+      //return;
+    }
+  }
+
+  // Compute form factors for voxels
+  using FFMatrix = std::vector<std::vector<std::pair<uint32_t, float>>>;
+  FF.clear();
+
+  std::vector<std::vector<std::pair<uint32_t, float>>> virtualPatchesFF;
+  std::vector<std::vector<FFMatrix>> virtualPatchesToPointsFF;
+  std::vector<FFMatrix> voxelRow;
+  std::vector<uint32_t> patchesToProcess;
+  std::vector<FFSample> finalSamples;
+  for (uint32_t voxelId = 0; voxelId < voxelsCount; ++voxelId) {
+    // Compute form-factors between current voxel and further voxels
+    if (100 * voxelId / voxelsCount < 100 * (voxelId + 1) / voxelsCount) {
+      std::cout << 100 * (voxelId + 1) / voxelsCount << "% finished" << std::endl;
+    }
+    std::vector<FFSample>& samples1 = samples[voxelId];
+    if (samples1.empty()) {
+      for (uint32_t i = 0; i < virtualPatchesToPointsFF.size(); ++i) {
+        virtualPatchesToPointsFF[i].erase(virtualPatchesToPointsFF[i].begin());
+      }
+      continue;
     }
 
-#pragma omp parallel for num_threads(8)
+    voxelRow.clear();
+    patchesToProcess.clear();
+    patchesToProcess.push_back(voxelId);
+    for (uint32_t anotherVoxelId = voxelId + 1; anotherVoxelId < voxelsCount; ++anotherVoxelId) {
+      const std::vector<FFSample>& samples2 = samples[anotherVoxelId];
+      if (samples2.empty()) {
+        continue;
+      }
+      const float3 posToPos = samples1[0].pos - samples2[0].pos;
+      //if (!(dot(samples1[0].normal, posToPos) >= 0 || dot(samples2[0].normal, posToPos) <= 0)) {
+        patchesToProcess.push_back(anotherVoxelId);
+      //}
+    }
+
+    voxelRow.resize(voxelsCount - voxelId);
+    for (uint32_t i = 0; i < voxelRow.size(); ++i) {
+      voxelRow[i].resize(samples1.size());
+    }
+
+//#pragma omp parallel for num_threads(8)
     for (int idx = 0; idx < patchesToProcess.size(); ++idx) {
       int j = patchesToProcess[idx];
-      const SamplesPacket& samples2 = samples[j];
+      voxelRow[j - voxelId].resize(samples1.size());
+      const std::vector<FFSample>& samples2 = samples[j];
 
       auto occluded = tracer.traceRays(samples1, samples2);
       bool fullOcclusion = true;
@@ -661,14 +839,14 @@ void RD_FFIntegrator::ComputeFF_voxelized(uint32_t quadsCount, std::vector<RD_FF
       if (fullOcclusion) {
         continue;
       }
-      float value = 0;
-      int samplesCount = 0;
       for (int k = 0, occlValue = 0; k < samples1.size(); ++k) {
-        const Sample& sample1 = samples1[k];
+        const FFSample& sample1 = samples1[k];
         for (int h = 0; h < samples2.size(); ++h, occlValue++) {
-          const Sample& sample2 = samples2[h];
+          if (idx == 0 && k == h) {
+            continue;
+          }
+          const FFSample& sample2 = samples2[h];
           if ((occluded[occlValue / RT_PACKET_SIZE] & (1 << (occlValue % RT_PACKET_SIZE))) != 0) {
-            samplesCount++;
             continue;
           }
           const float3 r = sample1.pos - sample2.pos;
@@ -681,40 +859,202 @@ void RD_FFIntegrator::ComputeFF_voxelized(uint32_t quadsCount, std::vector<RD_FF
           const float3 toSample = r * invL;
           const float theta1 = max(-dot(sample1.normal, toSample), 0.f);
           const float theta2 = max(dot(sample2.normal, toSample), 0.f);
-          value += theta1 * theta2 * invL * invL;
-          samplesCount++;
+          float value = theta1 * theta2 * invL * invL;
+          value *= 1.0f / PI;
+          value *= sample2.square;
+          if (value > 1e-9f) {
+            voxelRow[j - voxelId][k].emplace_back(h, min(value, 1));
+          }
         }
       }
-      if (samplesCount > 0) {
-        value /= samplesCount * 3.14f;
+      for (int k = 0; k < samples1.size(); ++k) {
+        std::sort(voxelRow[j - voxelId][k].begin(), voxelRow[j - voxelId][k].end());
       }
-#pragma omp critical
-      if (value > 1e-9) {
-        const float val1 = value * squares[j];
-        const float val2 = value * squares[i];
-        if (val1 > 1e-9) {
-          FF[i].emplace_back(j, min(val1, 1));
+    }
+
+    // Merge samples by form-factors
+    const uint32_t MAX_VIRTUAL_PATCHES = 3;
+    while (samples1.size() > MAX_VIRTUAL_PATCHES) {
+      std::pair<uint32_t, uint32_t> bestMatched(0, 0);
+      float bestSimilarity = 1e9f;
+      for (uint32_t i = 0; i < samples1.size() - 1; ++i) {
+        for (uint32_t j = i + 1; j < samples1.size(); ++j) {
+          const float normalsCoef = 2.0f - dot(samples1[j].normal, samples1[i].normal);
+          const float colorsCoef = 1.0f + length(samples1[i].color - samples1[j].color);
+          float ffCoef = 1.0f;
+          for (int idx = 0; idx < patchesToProcess.size(); ++idx) {
+            const FFMatrix& pointsSubFF = voxelRow[patchesToProcess[idx] - voxelId];
+            uint32_t iter1 = 0, iter2 = 0;
+            while (iter1 < pointsSubFF[i].size() && iter2 < pointsSubFF[j].size()) {
+              if (pointsSubFF[i][iter1].first < pointsSubFF[j][iter2].first) {
+                ffCoef += pow2(pointsSubFF[i][iter1].second);
+                iter1++;
+              } else if (pointsSubFF[i][iter1].first > pointsSubFF[j][iter2].first) {
+                ffCoef += pow2(pointsSubFF[j][iter2].second);
+                iter2++;
+              } else {
+                ffCoef += pow2(pointsSubFF[i][iter1].second - pointsSubFF[j][iter2].second);
+                iter1++;
+                iter2++;
+              }
+            }
+            while (iter1 < pointsSubFF[i].size()) {
+              ffCoef += pow2(pointsSubFF[i][iter1].second);
+              iter1++;
+            }
+            while (iter2 < pointsSubFF[j].size()) {
+              ffCoef += pow2(pointsSubFF[j][iter2].second);
+              iter2++;
+            }
+          }
+          ffCoef = std::sqrt(ffCoef);
+          const float similarity = normalsCoef * colorsCoef * ffCoef;
+          if (similarity < bestSimilarity) {
+            bestSimilarity = similarity;
+            bestMatched = std::make_pair(i, j);
+          }
         }
-        if (val2 > 1e-9) {
-          FF[j].emplace_back(i, min(val2, 1));
+      }
+
+      const float weight1 = samples1[bestMatched.first].square / (samples1[bestMatched.first].square + samples1[bestMatched.second].square);
+      const float weight2 = 1.0f - weight1;
+      samples1[bestMatched.first].color = samples1[bestMatched.first].color * weight1 + samples1[bestMatched.second].color * weight2;
+      samples1[bestMatched.first].emission = samples1[bestMatched.first].emission * weight1 + samples1[bestMatched.second].emission * weight2;
+      samples1[bestMatched.first].normal = normalize(samples1[bestMatched.first].normal * weight1 + samples1[bestMatched.second].normal * weight2);
+      samples1[bestMatched.first].square += samples1[bestMatched.second].square;
+      for (int idx = 0; idx < voxelRow.size(); ++idx) {
+        std::vector<std::pair<uint32_t, float>> newFFRow;
+        const FFMatrix& pointsSubFF = voxelRow[idx];
+        uint32_t iter1 = 0, iter2 = 0;
+        while (iter1 < pointsSubFF[bestMatched.first].size() && iter2 < pointsSubFF[bestMatched.second].size()) {
+          if (pointsSubFF[bestMatched.first][iter1].first < pointsSubFF[bestMatched.second][iter2].first) {
+            newFFRow.emplace_back(pointsSubFF[bestMatched.first][iter1]);
+            iter1++;
+          } else if (pointsSubFF[bestMatched.first][iter1].first > pointsSubFF[bestMatched.second][iter2].first) {
+            newFFRow.emplace_back(pointsSubFF[bestMatched.second][iter2]);
+            iter2++;
+          } else {
+            newFFRow.emplace_back(
+              pointsSubFF[bestMatched.first][iter1].first,
+              pointsSubFF[bestMatched.first][iter1].second * weight1 + pointsSubFF[bestMatched.second][iter2].second * weight2
+            );
+            iter1++;
+            iter2++;
+          }
+        }
+        while (iter1 < pointsSubFF[bestMatched.first].size()) {
+          newFFRow.emplace_back(pointsSubFF[bestMatched.first][iter1]);
+          iter1++;
+        }
+        while (iter2 < pointsSubFF[bestMatched.second].size()) {
+          newFFRow.emplace_back(pointsSubFF[bestMatched.second][iter2]);
+          iter2++;
+        }
+        voxelRow[idx][bestMatched.first] = newFFRow;
+        voxelRow[idx].erase(voxelRow[idx].begin() + bestMatched.second);
+      }
+      samples1.erase(samples1.begin() + bestMatched.second);
+      for (uint32_t j = 0; j < voxelRow[0].size(); ++j) {
+        std::vector<std::pair<uint32_t, float>>& row = voxelRow[0][j];
+        auto dest = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.first == elem.first; });
+        auto src = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.second == elem.first; });
+        if (dest != row.end()) {
+          if (src != row.end()) {
+            dest->second += src->second;
+            row.erase(src);
+          }
+        } else {
+          if (src != row.end()) {
+            const float value = src->second;
+            row.erase(src);
+            auto targetToAdd = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.first < elem.first; });
+            row.insert(targetToAdd, std::make_pair(bestMatched.first, value));
+          }
+        }
+        auto indicesToReduceBegin = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.second < elem.first; });
+        std::transform(indicesToReduceBegin, row.end(), indicesToReduceBegin, [](std::pair<uint32_t, float>& elem) { elem.first--; return elem; });
+      }
+      for (uint32_t i = 0; i < virtualPatchesToPointsFF.size(); ++i) {
+        for (uint32_t j = 0; j < virtualPatchesToPointsFF[i][0].size(); ++j) {
+          std::vector<std::pair<uint32_t, float>>& row = virtualPatchesToPointsFF[i][0][j];
+          auto dest = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.first == elem.first; });
+          auto src = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.second == elem.first; });
+          if (dest != row.end()) {
+            if (src != row.end()) {
+              dest->second += src->second;
+              row.erase(src);
+            }
+          } else {
+            if (src != row.end()) {
+              const float value = src->second;
+              row.erase(src);
+              auto targetToAdd = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.first < elem.first; });
+              row.insert(targetToAdd, std::make_pair(bestMatched.first, value));
+            }
+          }
+          auto indicesToReduceBegin = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.second < elem.first; });
+          std::transform(indicesToReduceBegin, row.end(), indicesToReduceBegin, [](std::pair<uint32_t, float> elem) { elem.first--; return elem; });
         }
       }
     }
-    std::sort(FF[i].begin(), FF[i].end());
-    float rowSum = 1e-9f;
-    for (const auto& elem : FF[i]) {
-      rowSum += elem.second;
-    }
-    if (rowSum > 1.0f) {
-      for (auto& elem : FF[i]) {
-        elem.second /= rowSum;
+
+    // Add virtual patch to the collection
+    // Move virtualPatchesToPointsFF first column to final matrix
+    for (uint32_t i = 0, j = 0; i < virtualPatchesToPointsFF.size(); ++i) {
+      for (uint32_t k = 0; k < virtualPatchesToPointsFF[i][0].size(); ++k, ++j) {
+        const uint32_t samplesOffset = static_cast<uint32_t>(finalSamples.size());
+        const uint32_t ffPrevSize = static_cast<uint32_t>(FF[j].size());
+        FF[j].resize(FF[j].size() + virtualPatchesToPointsFF[i][0][k].size());
+        std::transform(virtualPatchesToPointsFF[i][0][k].begin(), virtualPatchesToPointsFF[i][0][k].end(), FF[j].begin() + ffPrevSize, [samplesOffset](std::pair<uint32_t, float> elem) { elem.first += samplesOffset; return elem; });
       }
+    }
+    // Add row to final matrix
+    FF.resize(FF.size() + samples1.size());
+    for (uint32_t i = 0, j = 0; i < virtualPatchesToPointsFF.size(); ++i) {
+      for (uint32_t k = 0; k < virtualPatchesToPointsFF[i][0].size(); ++k, ++j) {
+        for (uint32_t h = 0; h < virtualPatchesToPointsFF[i][0][k].size(); ++h) {
+          const uint32_t samplesOffset = static_cast<uint32_t>(finalSamples.size());
+          const uint32_t sampleId = virtualPatchesToPointsFF[i][0][k][h].first + samplesOffset;
+          FF[sampleId].emplace_back(j, virtualPatchesToPointsFF[i][0][k][h].second / samples1[virtualPatchesToPointsFF[i][0][k][h].first].square * finalSamples[j].square);
+        }
+      }
+    }
+    //Remove first column from virtualPatchesToPointsFF
+    for (uint32_t i = 0; i < virtualPatchesToPointsFF.size(); ++i) {
+      virtualPatchesToPointsFF[i].erase(virtualPatchesToPointsFF[i].begin());
+    }
+    // Add row to virtualPatchesToPointsFF
+    if (voxelRow.size() > 1) {
+      virtualPatchesToPointsFF.emplace_back(voxelRow.begin() + 1, voxelRow.end());
+    }
+    // Add diagonal submatrix to final matrix
+    for (uint32_t i = 0; i < samples1.size(); ++i) {
+      const uint32_t samplesOffset = static_cast<uint32_t>(finalSamples.size());
+      const uint32_t rowIdx = static_cast<uint32_t>(FF.size() - samples1.size() + i);
+      const uint32_t ffPrevSize = static_cast<uint32_t>(FF[rowIdx].size());
+      FF[rowIdx].resize(FF[rowIdx].size() + voxelRow[0][i].size());
+      std::transform(voxelRow[0][i].begin(), voxelRow[0][i].end(), FF[rowIdx].begin() + ffPrevSize, [samplesOffset](std::pair<uint32_t, float> elem) { elem.first += samplesOffset; return elem; });
+    }
+
+    finalSamples.insert(finalSamples.end(), samples1.begin(), samples1.end());
+    for (uint32_t i = 0; i < samples1.size(); ++i) {
+      virtualPatchVoxelId.push_back(voxelId);
     }
   }
 
+  normals.resize(finalSamples.size());
+  emission.resize(finalSamples.size());
+  colors.resize(finalSamples.size());
+  for (uint32_t i = 0; i < finalSamples.size(); ++i) {
+    normals[i] = finalSamples[i].normal;
+    colors[i] = finalSamples[i].color;
+    emission[i] = finalSamples[i].emission;
+  }
+
   fout.write(reinterpret_cast<const char*>(&DataConfig::FF_VERSION), sizeof(DataConfig::FF_VERSION));
-  fout.write(reinterpret_cast<const char*>(&quadsCount), sizeof(quadsCount));
-  for (uint32_t i = 0; i < quadsCount; ++i) {
+  const uint32_t outSize = static_cast<uint32_t>(finalSamples.size());
+  fout.write(reinterpret_cast<const char*>(&outSize), sizeof(outSize));
+  for (uint32_t i = 0; i < outSize; ++i) {
     uint32_t rowSize = static_cast<uint32_t>(FF[i].size());
     fout.write(reinterpret_cast<char*>(&rowSize), sizeof(rowSize));
     for (auto it = FF[i].begin(); it != FF[i].end(); ++it) {
@@ -1019,11 +1359,6 @@ void merge_ff_by_polygon(std::vector<uint32_t>& voxels,
   ff = std::move(compressedFF);
 }
 
-template <typename T>
-T pow2(T x) {
-  return x * x;
-}
-
 float lengthSq(const float3& a) {
   return pow2(a.x) + pow2(a.y) + pow2(a.z);
 }
@@ -1284,7 +1619,13 @@ void RD_FFIntegrator::EndScene() {
   std::cout << "Max vox: " << *std::max_element(voxels.begin(), voxels.end()) << std::endl;
 
   std::cout << trianglesCount << " triangles" << std::endl;
-  ComputeFF(static_cast<uint32_t>(instanceTriangles.size()), instanceTriangles, squares);
+  //ComputeFF(static_cast<uint32_t>(instanceTriangles.size()), instanceTriangles, squares);
+
+  std::vector<float3> normals(instanceTriangles.size());
+  for (uint32_t i = 0; i < normals.size(); ++i) {
+    normals[i] = to_float3(instanceTriangles[i].normal.value()[0]);
+  }
+  std::vector<float3> voxelsCenters(gridSize.x * gridSize.y * gridSize.z);
   float3 bmin = float3(1e9, 1e9, 1e9);
   float3 bmax = float3(-1e9, -1e9, -1e9);
   for (uint32_t i = 0; i < instanceTriangles.size(); ++i) {
@@ -1298,13 +1639,18 @@ void RD_FFIntegrator::EndScene() {
     }
   }
 
-  std::vector<float3> normals(instanceTriangles.size());
-  for (uint32_t i = 0; i < normals.size(); ++i) {
-    normals[i] = to_float3(instanceTriangles[i].normal.value()[0]);
+  for (uint32_t z = 0, idx = 0; z < gridSize.z; ++z) {
+    for (uint32_t y = 0; y < gridSize.y; ++y) {
+      for (uint32_t x = 0; x < gridSize.x; ++x, ++idx) {
+        voxelsCenters[idx] = bmin + (float3(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)) + float3(0.5, 0.5, 0.5)) * voxelSize;
+      }
+    }
   }
 
-  merge_ff_by_polygon(voxels, colors, emission, normals, squares, FF);
-  merge_ff_by_ff_values(voxels, colors, emission, normals, squares, FF);
+  ComputeFF_voxelized(instanceTriangles, squares, voxelsCenters, voxelSize, colors, emission, normals);
+
+  //merge_ff_by_polygon(voxels, colors, emission, normals, squares, FF);
+  //merge_ff_by_ff_values(voxels, colors, emission, normals, squares, FF);
 
   auto lighting = ComputeLightingClassic(emission, colors);
   //auto lighting = ComputeLightingRandom(emission, colors);
@@ -1315,10 +1661,8 @@ void RD_FFIntegrator::EndScene() {
   std::vector<std::array<float4, PATCHES_IN_VOXEL>> inVoxelWeightMatrix(gridSize.x* gridSize.y* gridSize.z);
 
   for (uint32_t i = 0; i < lighting.size(); ++i) {
-    const uint32_t voxelId = voxels[i];
-    if (voxelId == 360)
-      std::cout << "Lighting[i]: " << i << std::endl;
-    float square = squares[i];
+    const uint32_t voxelId = virtualPatchVoxelId[i];
+    float square = 1.0f;// squares[i];
     float3 light = lighting[i];
     float3 normal = normals[i];
     for (uint32_t j = 0; j < PATCHES_IN_VOXEL; ++j) {
@@ -1358,7 +1702,6 @@ void RD_FFIntegrator::EndScene() {
     for (uint32_t j = 0; j < normalsIn2d.size(); ++j) {
       normalsIn2d[j] = getAnglesForNormal(inVoxelNormals[i][j]);
     }
-    
 
     float4x4 normalsMat4x4;
     normalsMat4x4.row[0] = float4(normalsIn2d[0].x, normalsIn2d[1].x, normalsIn2d[2].x, 0);

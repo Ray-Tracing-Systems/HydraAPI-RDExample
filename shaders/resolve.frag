@@ -49,7 +49,7 @@ vec3 sampleLighting(vec3 worldPos, vec3 normal) {
   uint flatIndices[8];
   flatIndices[0] = idx.x + idx.y * gridSize.x + idx.z * gridSize.x * gridSize.y;
   for (int i = 0; i < 8; ++i) {
-    flatIndices[i] = idx.x + (i & 1) + (idx.y + ((i & 2)  >> 1)) * gridSize.x + (idx.z + ((i & 4) >> 2)) * gridSize.x * gridSize.y;
+    flatIndices[i] = idx.x + (i & 1) + (idx.y + ((i & 2) >> 1)) * gridSize.x + (idx.z + ((i & 4) >> 2)) * gridSize.x * gridSize.y;
   }
 
   vec3 lerps = vec3(0, 0, 0);

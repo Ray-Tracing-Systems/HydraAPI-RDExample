@@ -389,7 +389,7 @@ VkPipeline RD_Vulkan::createGraphicsPipeline(const PipelineConfig& config, VkPip
 
   VkPipelineInputAssemblyStateCreateInfo inputAssemblyDesc = {};
   inputAssemblyDesc.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-  inputAssemblyDesc.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  inputAssemblyDesc.topology = config.primitiveTopology;
   inputAssemblyDesc.primitiveRestartEnable = VK_FALSE;
 
   VkViewport viewport = {};
@@ -1275,6 +1275,13 @@ void RD_Vulkan::prepareCommandBuffers() {
     vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[i], 0, nullptr);
     vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
 
+    if (debugPointsCount) {
+      vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, debugPointsPipeline);
+      vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, &debugPointsVertexBuffer, &zeroOffset);
+      vkCmdPushConstants(commandBuffers[i], gbufferPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4), &globtm);
+      vkCmdDraw(commandBuffers[i], debugPointsCount, 1, 0, 0);
+    }
+
     vkCmdEndRenderPass(commandBuffers[i]);
     VK_CHECK_RESULT(vkEndCommandBuffer(commandBuffers[i]));
   }
@@ -1358,6 +1365,15 @@ void RD_Vulkan::createPipelines() {
   resolveConfig.renderPass = resolveRenderPass;
   resolveConfig.descriptorSetLayout = descriptorSetLayout;
   resolvePipeline = createGraphicsPipeline(resolveConfig, pipelineLayout);
+  PipelineConfig debugPointsConfig;
+  debugPointsConfig.vertexShaderPath = "shaders/debug_points_vert.spv";
+  debugPointsConfig.pixelShaderPath = "shaders/debug_points_frag.spv";
+  debugPointsConfig.renderPass = resolveRenderPass;
+  debugPointsConfig.descriptorSetLayout = descriptorSetLayout;
+  debugPointsConfig.primitiveTopology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+  debugPointsConfig.hasVertexBuffer = true;
+  debugPointsConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4) });
+  debugPointsPipeline = createGraphicsPipeline(debugPointsConfig, debugPointsPipelineLayout);
 }
 
 void RD_Vulkan::recreateSwapChain() {
@@ -1705,6 +1721,39 @@ void RD_Vulkan::createLightingBuffer() {
   }
 }
 
+void RD_Vulkan::prepareDebugPoints() {
+  std::ifstream debugPointsIn(DataConfig::get().getBinFilePath(L"debugPoints.bin"), std::ios::binary | std::ios::in);
+  if (!debugPointsIn.good())
+    return;
+  debugPointsIn.read(reinterpret_cast<char*>(&debugPointsCount), sizeof(debugPointsCount));
+  std::vector<Vertex> debugPointsData(debugPointsCount);
+  for (uint32_t i = 0; i < debugPointsCount; ++i) {
+    debugPointsIn.read(reinterpret_cast<char*>(&debugPointsData[i].pos), sizeof(debugPointsData[i].pos));
+    debugPointsIn.read(reinterpret_cast<char*>(&debugPointsData[i].normal), sizeof(debugPointsData[i].normal));
+  }
+  if (debugPointsCount == 0) {
+    return;
+  }
+  {
+    VkDeviceSize bufferSize = debugPointsCount * sizeof(Vertex);
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+    void* data;
+    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, debugPointsData.data(), (size_t)bufferSize);
+    vkUnmapMemory(device, stagingBufferMemory);
+
+    BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, debugPointsVertexBuffer, debugPointsVertexBufferMemory);
+
+    BufferManager::get().copyBuffer(stagingBuffer, debugPointsVertexBuffer, bufferSize);
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingBufferMemory, nullptr);
+  }
+}
+
 RD_Vulkan::RD_Vulkan()
 {
   createInstance();
@@ -1724,6 +1773,7 @@ RD_Vulkan::RD_Vulkan()
   createDepthResources();
   createBuffers();
   createLightingBuffer();
+  prepareDebugPoints();
   createDescriptorPool();
   createDescriptorSets();
   createFramebuffers();

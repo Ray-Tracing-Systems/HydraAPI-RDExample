@@ -148,7 +148,7 @@ int main(int argc, const char** argv)
   
   std::cout << "sizeof(size_t) = " << sizeof(size_t) <<std::endl;
 
-  float voxelSize = 0.5 / 2;
+  float voxelSize = 0.5 / 8;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-voxelSize") == 0 && i + 1 < argc) {
       voxelSize = std::stof(argv[i + 1]);
@@ -167,15 +167,16 @@ int main(int argc, const char** argv)
   //window_main_free_look_vulkan(L"../Diser/DiffuseReference/06_Indoor/scenelib", L"vulkan");
   //window_main_free_look_vulkan(L"../Diser/DiffuseReference/07_Outdoor/scenelib", L"vulkan");
   //window_main_free_look_vulkan(L"../Diser/DiffuseReference/08_BigScene/scenelib", L"vulkan");
-  //const std::wstring scene = L"01_CornellBoxEmpty"; // 0.5 / 8
+  const std::wstring scene = L"01_CornellBoxEmpty"; // 0.5 / 8
   //const std::wstring scene = L"02_CornellBoxWithPrim"; // 0.5 / 8
   //const std::wstring scene = L"SimpleInterior_500tris"; // 0.5 / 4
-  const std::wstring scene = L"SimpleInterior_5K"; // 0.5 / 2
+  //const std::wstring scene = L"SimpleInterior_5K"; // 0.5 / 2
   //const std::wstring scene = L"05_Sponza";
   //const std::wstring scene = L"test_42"; // 0.5
   DataConfig::get().init(scene, scaledVoxelSize);
   window_main_voxel_tessellator(L"../Diser/DiffuseReference/", scene, voxelSize);
-  window_main_ff_integrator(L"Tessellated", scene);
+  //window_main_ff_integrator(L"Tessellated", scene);
+  window_main_ff_integrator(L"../Diser/DiffuseReference/", scene);
   window_main_free_look_vulkan(L"Tessellated", scene);
   //window_main_free_look_vulkan(L"GI_res", scene);
   //window_main_free_look_vulkan(L"Tessellated", L"vulkan");
