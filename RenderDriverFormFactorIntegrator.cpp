@@ -768,20 +768,20 @@ void RD_FFIntegrator::ComputeFF_voxelized(
     for (auto& sample : samples[i]) {
       sample.square /= primCounter[sample.primId];
     }
-    if (i == 4)
-    {
-      std::ofstream fout(DataConfig::get().getBinFilePath(L"debugPoints.bin"), std::ios::binary);
-      uint32_t samplesCount = static_cast<uint32_t>(samples[i].size());
-      fout.write(reinterpret_cast<char*>(&samplesCount), sizeof(samplesCount));
-      for (uint32_t j = 0; j < samplesCount; ++j) {
-        float3 color(1, 0, 0);
-        fout.write(reinterpret_cast<char*>(&samples[i][j].pos), sizeof(samples[i][j].pos));
-        //fout.write(reinterpret_cast<char*>(&samples[i][j].color), sizeof(samples[i][j].color));
-        fout.write(reinterpret_cast<char*>(&color), sizeof(color));
-      }
-      fout.close();
-      //return;
-    }
+    //if (i == 4)
+    //{
+    //  std::ofstream fout(DataConfig::get().getBinFilePath(L"debugPoints.bin"), std::ios::binary);
+    //  uint32_t samplesCount = static_cast<uint32_t>(samples[i].size());
+    //  fout.write(reinterpret_cast<char*>(&samplesCount), sizeof(samplesCount));
+    //  for (uint32_t j = 0; j < samplesCount; ++j) {
+    //    float3 color(1, 0, 0);
+    //    fout.write(reinterpret_cast<char*>(&samples[i][j].pos), sizeof(samples[i][j].pos));
+    //    //fout.write(reinterpret_cast<char*>(&samples[i][j].color), sizeof(samples[i][j].color));
+    //    fout.write(reinterpret_cast<char*>(&color), sizeof(color));
+    //  }
+    //  fout.close();
+    //  //return;
+    //}
   }
 
   // Compute form factors for voxels
