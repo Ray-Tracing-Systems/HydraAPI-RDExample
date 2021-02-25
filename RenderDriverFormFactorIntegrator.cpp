@@ -706,6 +706,7 @@ void RD_FFIntegrator::ComputeFF_voxelized(
   std::vector<float3> &emission,
   std::vector<float3> &normals)
 {
+  Timer t("Compute ff");
   const uint32_t voxelsCount = static_cast<uint32_t>(voxels_centers.size());
   std::wstring ffFilename = DataConfig::get().getBinFilePath(L"FF_vox.bin");
   std::ifstream fin(ffFilename, std::ios::binary);
@@ -873,42 +874,54 @@ void RD_FFIntegrator::ComputeFF_voxelized(
     }
 
     // Merge samples by form-factors
+    std::vector<std::vector<float>> similarityMatrix(samples1.size());
+    for (uint32_t i = 0; i < similarityMatrix.size(); ++i) {
+      similarityMatrix[i].assign(samples1.size(), 0);
+    }
+    for (uint32_t i = 0; i < similarityMatrix.size(); ++i) {
+      for (uint32_t j = i + 1; j < similarityMatrix.size(); ++j) {
+        const float normalsCoef = 2.0f - dot(samples1[j].normal, samples1[i].normal);
+        const float colorsCoef = 1.0f + length(samples1[i].color - samples1[j].color);
+        float ffCoef = 1.0f;
+        for (int idx = 0; idx < patchesToProcess.size(); ++idx) {
+          const FFMatrix& pointsSubFF = voxelRow[patchesToProcess[idx] - voxelId];
+          uint32_t iter1 = 0, iter2 = 0;
+          while (iter1 < pointsSubFF[i].size() && iter2 < pointsSubFF[j].size()) {
+            if (pointsSubFF[i][iter1].first < pointsSubFF[j][iter2].first) {
+              ffCoef += pow2(pointsSubFF[i][iter1].second);
+              iter1++;
+            }
+            else if (pointsSubFF[i][iter1].first > pointsSubFF[j][iter2].first) {
+              ffCoef += pow2(pointsSubFF[j][iter2].second);
+              iter2++;
+            }
+            else {
+              ffCoef += pow2(pointsSubFF[i][iter1].second - pointsSubFF[j][iter2].second);
+              iter1++;
+              iter2++;
+            }
+          }
+          while (iter1 < pointsSubFF[i].size()) {
+            ffCoef += pow2(pointsSubFF[i][iter1].second);
+            iter1++;
+          }
+          while (iter2 < pointsSubFF[j].size()) {
+            ffCoef += pow2(pointsSubFF[j][iter2].second);
+            iter2++;
+          }
+        }
+        ffCoef = std::sqrt(ffCoef);
+        similarityMatrix[j][i] = similarityMatrix[i][j] = normalsCoef * colorsCoef * ffCoef;
+      }
+    }
+
     const uint32_t MAX_VIRTUAL_PATCHES = 3;
     while (samples1.size() > MAX_VIRTUAL_PATCHES) {
       std::pair<uint32_t, uint32_t> bestMatched(0, 0);
       float bestSimilarity = 1e9f;
       for (uint32_t i = 0; i < samples1.size() - 1; ++i) {
         for (uint32_t j = i + 1; j < samples1.size(); ++j) {
-          const float normalsCoef = 2.0f - dot(samples1[j].normal, samples1[i].normal);
-          const float colorsCoef = 1.0f + length(samples1[i].color - samples1[j].color);
-          float ffCoef = 1.0f;
-          for (int idx = 0; idx < patchesToProcess.size(); ++idx) {
-            const FFMatrix& pointsSubFF = voxelRow[patchesToProcess[idx] - voxelId];
-            uint32_t iter1 = 0, iter2 = 0;
-            while (iter1 < pointsSubFF[i].size() && iter2 < pointsSubFF[j].size()) {
-              if (pointsSubFF[i][iter1].first < pointsSubFF[j][iter2].first) {
-                ffCoef += pow2(pointsSubFF[i][iter1].second);
-                iter1++;
-              } else if (pointsSubFF[i][iter1].first > pointsSubFF[j][iter2].first) {
-                ffCoef += pow2(pointsSubFF[j][iter2].second);
-                iter2++;
-              } else {
-                ffCoef += pow2(pointsSubFF[i][iter1].second - pointsSubFF[j][iter2].second);
-                iter1++;
-                iter2++;
-              }
-            }
-            while (iter1 < pointsSubFF[i].size()) {
-              ffCoef += pow2(pointsSubFF[i][iter1].second);
-              iter1++;
-            }
-            while (iter2 < pointsSubFF[j].size()) {
-              ffCoef += pow2(pointsSubFF[j][iter2].second);
-              iter2++;
-            }
-          }
-          ffCoef = std::sqrt(ffCoef);
-          const float similarity = normalsCoef * colorsCoef * ffCoef;
+          const float similarity = similarityMatrix[i][j];
           if (similarity < bestSimilarity) {
             bestSimilarity = similarity;
             bestMatched = std::make_pair(i, j);
@@ -995,6 +1008,49 @@ void RD_FFIntegrator::ComputeFF_voxelized(
           auto indicesToReduceBegin = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.second < elem.first; });
           std::transform(indicesToReduceBegin, row.end(), indicesToReduceBegin, [](std::pair<uint32_t, float> elem) { elem.first--; return elem; });
         }
+      }
+
+      similarityMatrix.erase(similarityMatrix.begin() + bestMatched.second);
+      for (uint32_t i = 0; i < similarityMatrix.size(); ++i) {
+        similarityMatrix[i].erase(similarityMatrix[i].begin() + bestMatched.second);
+      }
+      for (uint32_t i = 0; i < similarityMatrix.size(); ++i) {
+        if (i == bestMatched.first) {
+          continue;
+        }
+        const float normalsCoef = 2.0f - dot(samples1[bestMatched.first].normal, samples1[i].normal);
+        const float colorsCoef = 1.0f + length(samples1[i].color - samples1[bestMatched.first].color);
+        float ffCoef = 1.0f;
+        for (int idx = 0; idx < patchesToProcess.size(); ++idx) {
+          const FFMatrix& pointsSubFF = voxelRow[patchesToProcess[idx] - voxelId];
+          uint32_t iter1 = 0, iter2 = 0;
+          while (iter1 < pointsSubFF[i].size() && iter2 < pointsSubFF[bestMatched.first].size()) {
+            if (pointsSubFF[i][iter1].first < pointsSubFF[bestMatched.first][iter2].first) {
+              ffCoef += pow2(pointsSubFF[i][iter1].second);
+              iter1++;
+            }
+            else if (pointsSubFF[i][iter1].first > pointsSubFF[bestMatched.first][iter2].first) {
+              ffCoef += pow2(pointsSubFF[bestMatched.first][iter2].second);
+              iter2++;
+            }
+            else {
+              ffCoef += pow2(pointsSubFF[i][iter1].second - pointsSubFF[bestMatched.first][iter2].second);
+              iter1++;
+              iter2++;
+            }
+          }
+          while (iter1 < pointsSubFF[i].size()) {
+            ffCoef += pow2(pointsSubFF[i][iter1].second);
+            iter1++;
+          }
+          while (iter2 < pointsSubFF[bestMatched.first].size()) {
+            ffCoef += pow2(pointsSubFF[bestMatched.first][iter2].second);
+            iter2++;
+          }
+        }
+        ffCoef = std::sqrt(ffCoef);
+        similarityMatrix[i][bestMatched.first] = normalsCoef * colorsCoef * ffCoef;
+        similarityMatrix[bestMatched.first][i] = normalsCoef * colorsCoef * ffCoef;
       }
     }
 
