@@ -457,6 +457,8 @@ public:
     const uint32_t samplesWords = (samplesPairs + 15) / 16;
     std::vector<uint16_t> result(samplesWords, 0);
     std::vector<RTCRay16> raysPacket(samplesWords);
+    uint32_t invisibleCount = 0;
+    std::vector<bool> emptyPacket(samplesWords, true);
     for (int i = 0, target_id = 0; i < samples1.size(); ++i) {
       const FFSample& s1 = samples1[i];
       for (int j = 0; j < samples2.size(); ++j, ++target_id) {
@@ -473,11 +475,24 @@ public:
         raysPacket[packet_id].dir_y[sampleInPacket] = dir.y;
         raysPacket[packet_id].dir_z[sampleInPacket] = dir.z;
         raysPacket[packet_id].tfar[sampleInPacket] = 1.f - BIAS;
+        if (dot(dir, s1.normal) < 0 || dot(dir, s2.normal) > 0) {
+          invisibleCount++;
+        } else {
+          emptyPacket[packet_id] = false;
+        }
       }
+    }
+    if (invisibleCount == samplesPairs) {
+      result.assign(result.size(), 0xFFFF);
+      return result;
     }
 
     const int validMask = ~0u;
     for (uint32_t i = 0; i < samplesWords; ++i) {
+      if (emptyPacket[i]) {
+        result[i] = 0xFFFF;
+        continue;
+      }
       rtcOccluded16(&validMask, Scene, &IntersectionContext, &raysPacket[i]); //CHECK_EMBREE
       for (uint32_t k = 0; k < RT_PACKET_SIZE; ++k) {
         if (std::isinf(raysPacket[i].tfar[k])) {
