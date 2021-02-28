@@ -488,7 +488,7 @@ public:
     }
 
     const int validMask = ~0u;
-    for (uint32_t i = 0; i < samplesWords; ++i) {
+    for (int i = 0; i < (int)samplesWords; ++i) {
       if (emptyPacket[i]) {
         result[i] = 0xFFFF;
         continue;
@@ -953,6 +953,7 @@ void RD_FFIntegrator::ComputeFF_voxelized(
       for (int idx = 0; idx < voxelRow.size(); ++idx) {
         std::vector<std::pair<uint32_t, float>> newFFRow;
         const FFMatrix& pointsSubFF = voxelRow[idx];
+        newFFRow.reserve(pointsSubFF[bestMatched.first].size() + pointsSubFF[bestMatched.second].size());
         uint32_t iter1 = 0, iter2 = 0;
         while (iter1 < pointsSubFF[bestMatched.first].size() && iter2 < pointsSubFF[bestMatched.second].size()) {
           if (pointsSubFF[bestMatched.first][iter1].first < pointsSubFF[bestMatched.second][iter2].first) {
@@ -978,7 +979,7 @@ void RD_FFIntegrator::ComputeFF_voxelized(
           newFFRow.emplace_back(pointsSubFF[bestMatched.second][iter2]);
           iter2++;
         }
-        voxelRow[idx][bestMatched.first] = newFFRow;
+        voxelRow[idx][bestMatched.first] = std::move(newFFRow);
         voxelRow[idx].erase(voxelRow[idx].begin() + bestMatched.second);
       }
       samples1.erase(samples1.begin() + bestMatched.second);
