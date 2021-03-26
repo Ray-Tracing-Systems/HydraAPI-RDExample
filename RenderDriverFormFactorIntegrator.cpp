@@ -531,7 +531,7 @@ public:
         rays[packetId].ray.org_x[localId] = positions[rayId].x;
         rays[packetId].ray.org_y[localId] = positions[rayId].y;
         rays[packetId].ray.org_z[localId] = positions[rayId].z;
-        rays[packetId].ray.tfar [localId] = 1.f + BIAS;
+        rays[packetId].ray.tfar [localId] = 1.f + 2 * BIAS;
       }
     }
     // Trace rays
@@ -544,7 +544,7 @@ public:
     for (uint32_t packetId = 0, rayId = 0; packetId < WORDS_FOR_SAMPLES; ++packetId) {
       for (uint32_t localId = 0; localId < RT_PACKET_SIZE && rayId < dirs.size(); ++localId, ++rayId) {
         // Skip no hit
-        if (std::isinf(rays[packetId].ray.tfar[localId]) || rays[packetId].ray.tfar[localId] >= 1.f + BIAS) {
+        if (std::isinf(rays[packetId].ray.tfar[localId]) || rays[packetId].ray.tfar[localId] >= 1.f + 2 * BIAS) {
           continue;
         }
         // Skip back faces
