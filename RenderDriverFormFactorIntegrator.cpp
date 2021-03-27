@@ -267,7 +267,10 @@ const uint32_t SAMPLES_PACKET_SIZE_L = 16;
 const uint32_t SAMPLES_PACKET_SIZE_XL = 32;
 const uint32_t SAMPLES_PACKET_SIZE_XXL = 128;
 
-const uint32_t SAMPLES_PACKET_SIZE = SAMPLES_PACKET_SIZE_XXL;
+const uint32_t CUBE_SPLIT = 4;
+const uint32_t CUBE_SIDES = 6;
+
+const uint32_t SAMPLES_PACKET_SIZE = CUBE_SPLIT * CUBE_SPLIT * CUBE_SPLIT * CUBE_SIDES;
 const uint32_t SAMPLES_PAIRS = SAMPLES_PACKET_SIZE * SAMPLES_PACKET_SIZE;
 const uint32_t RT_PACKET_SIZE = 16;
 static_assert(SAMPLES_PAIRS % RT_PACKET_SIZE == 0);
@@ -564,6 +567,63 @@ public:
     return samples;
   }
 
+  std::vector<FFSample> traceRays(
+    std::array<float3, SAMPLES_PACKET_SIZE> positions,
+    const std::array<float3, SAMPLES_PACKET_SIZE>& directions,
+    const float3& center,
+    const std::vector<float3>& colors,
+    const std::vector<float3>& emissions,
+    const std::vector<float>& squares,
+    const std::vector<float3>& normals) {
+    // Generate positions
+    for (uint32_t i = 0; i < positions.size(); ++i) {
+      positions[i] += center;
+    }
+    // Fill packets to trace
+    const float BIAS = 1e-6f;
+    std::array<RTCRayHit16, WORDS_FOR_SAMPLES> rays;
+    for (uint32_t packetId = 0, rayId = 0; packetId < rays.size(); ++packetId) {
+      for (uint32_t localId = 0; localId < RT_PACKET_SIZE && rayId < directions.size(); ++localId, ++rayId) {
+        rays[packetId].ray.dir_x[localId] = directions[rayId].x;
+        rays[packetId].ray.dir_y[localId] = directions[rayId].y;
+        rays[packetId].ray.dir_z[localId] = directions[rayId].z;
+        rays[packetId].ray.tnear[localId] = -2 * BIAS;
+        rays[packetId].ray.org_x[localId] = positions[rayId].x;
+        rays[packetId].ray.org_y[localId] = positions[rayId].y;
+        rays[packetId].ray.org_z[localId] = positions[rayId].z;
+        rays[packetId].ray.tfar[localId] = 1.f + 2 * BIAS;
+      }
+    }
+    // Trace rays
+    const int validMask = ~0u;
+    for (uint32_t i = 0; i < WORDS_FOR_SAMPLES; ++i) {
+      rtcIntersect16(&validMask, Scene, &IntersectionContext, &rays[i]); CHECK_EMBREE
+    }
+    // Gather sampled results
+    std::vector<FFSample> samples;
+    for (uint32_t packetId = 0, rayId = 0; packetId < WORDS_FOR_SAMPLES; ++packetId) {
+      for (uint32_t localId = 0; localId < RT_PACKET_SIZE && rayId < directions.size(); ++localId, ++rayId) {
+        // Skip no hit
+        if (std::isinf(rays[packetId].ray.tfar[localId]) || rays[packetId].ray.tfar[localId] >= 1.f + 2 * BIAS) {
+          continue;
+        }
+        // Skip back faces
+        const float3 normal = normalize(normals[rays[packetId].hit.primID[localId]]);
+        if (dot(normal, -directions[rayId]) < 0.0) {
+          continue;
+        }
+        // Extract color and square by polygonId
+        const float3 color = colors[rays[packetId].hit.primID[localId]];
+        const float3 emission = emissions[rays[packetId].hit.primID[localId]];
+        const float square = squares[rays[packetId].hit.primID[localId]];
+        // Generate sample
+        const float3 position = positions[rayId] + directions[rayId] * rays[packetId].ray.tfar[localId];
+        samples.push_back(FFSample{ position, normal, color, square, emission, rays[packetId].hit.primID[localId] });
+      }
+    }
+    return samples;
+  }
+
   ~EmbreeTracer() {
     rtcReleaseScene(Scene);
     rtcReleaseDevice(Device);
@@ -771,12 +831,39 @@ void RD_FFIntegrator::ComputeFF_voxelized(
     hammDirs[i] *= halfDiag / dirLength;
   }
 
+  /// Iterate over axises
+  std::array<float3, SAMPLES_PACKET_SIZE> positions, directions;
+  for (uint32_t x = 0, idx = 0; x < CUBE_SPLIT; ++x) {
+    for (uint32_t y = 0; y < CUBE_SPLIT; ++y) {
+      for (uint32_t z = 0; z < CUBE_SPLIT; ++z) {
+        // Compute subcube center
+        const float cubeScale = voxel_size / static_cast<float>(CUBE_SPLIT);
+        const float3 subCubeCorner = (float3(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)) + 0.5f) * cubeScale - voxel_size * 0.5f;
+        // Prepare offsets for sides
+        const std::array<float3, 3> OFFSETS = {float3(0, 0, 0.5f * cubeScale), float3(0, 0.5f * cubeScale, 0), float3(0.5f * cubeScale, 0, 0) };
+        // Iterate over offsets
+        for (const auto& baseOffset : OFFSETS) {
+          // Add sample
+          for (int sign = -1; sign <= 1; sign += 2, idx++) {
+            const float3 offset = baseOffset * static_cast<float>(sign);
+            positions[idx] = subCubeCorner + offset;
+            directions[idx] = -2 * offset;
+          }
+        }
+      }
+    }
+  }
+
+  std::filesystem::remove(DataConfig::get().getBinFilePath(L"debugPoints.bin"));
+  uint32_t maxSamplesCount = 0;
+
   // Generate samples for each voxel
   std::vector<std::vector<FFSample>> samples(voxelsCount);
   EmbreeTracer tracer(triangles);
   for (uint32_t i = 0; i < voxelsCount; ++i) {
     // Trace rays from sphere surface to sphere center
-    samples[i] = tracer.traceRaysTo(hammDirs, voxels_centers[i], colors, emission, squares, normals);
+    /*samples[i] = tracer.traceRaysTo(hammDirs, voxels_centers[i], colors, emission, squares, normals);*/
+    samples[i] = tracer.traceRays(positions, directions, voxels_centers[i], colors, emission, squares, normals);
     std::unordered_map<uint32_t, uint32_t> primCounter;
     for (const auto& sample : samples[i]) {
       primCounter[sample.primId]++;
@@ -784,13 +871,15 @@ void RD_FFIntegrator::ComputeFF_voxelized(
     for (auto& sample : samples[i]) {
       sample.square /= primCounter[sample.primId];
     }
-    //if (i == 4)
+    maxSamplesCount = max(maxSamplesCount, static_cast<uint32_t>(samples[i].size()));
+    //if (i == 37)
     //{
     //  std::ofstream fout(DataConfig::get().getBinFilePath(L"debugPoints.bin"), std::ios::binary);
     //  uint32_t samplesCount = static_cast<uint32_t>(samples[i].size());
     //  fout.write(reinterpret_cast<char*>(&samplesCount), sizeof(samplesCount));
     //  for (uint32_t j = 0; j < samplesCount; ++j) {
     //    float3 color(1, 0, 0);
+    //    float3 pos = positions[j] + voxels_centers[i];
     //    fout.write(reinterpret_cast<char*>(&samples[i][j].pos), sizeof(samples[i][j].pos));
     //    //fout.write(reinterpret_cast<char*>(&samples[i][j].color), sizeof(samples[i][j].color));
     //    fout.write(reinterpret_cast<char*>(&color), sizeof(color));
@@ -799,6 +888,24 @@ void RD_FFIntegrator::ComputeFF_voxelized(
     //  //return;
     //}
   }
+  std::cout << "Max samples count: " << maxSamplesCount << std::endl;
+
+  //{
+  //  std::ofstream fout(DataConfig::get().getBinFilePath(L"debugPoints.bin"), std::ios::binary);
+  //  uint32_t samplesCount = 0;
+  //  for (uint32_t i = 0; i < voxelsCount; ++i) {
+  //    samplesCount += static_cast<uint32_t>(samples[i].size());
+  //  }
+  //  fout.write(reinterpret_cast<char*>(&samplesCount), sizeof(samplesCount));
+  //  for (uint32_t i = 0; i < voxelsCount; ++i) {
+  //    for (uint32_t j = 0; j < samples[i].size(); ++j) {
+  //      float3 color(1, 0, 0);
+  //      fout.write(reinterpret_cast<char*>(&samples[i][j].pos), sizeof(samples[i][j].pos));
+  //      fout.write(reinterpret_cast<char*>(&color), sizeof(color));
+  //    }
+  //  }
+  //  fout.close();
+  //}
 
   // Compute form factors for voxels
   using FFMatrix = std::vector<std::vector<std::pair<uint32_t, float>>>;
