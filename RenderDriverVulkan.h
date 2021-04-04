@@ -395,4 +395,5 @@ protected:
   HydraLiteMath::uint4 gridSize;
   HydraLiteMath::float4 bmin;
   HydraLiteMath::float4 bmax;
+  HydraLiteMath::float4 averageLighting;
 };

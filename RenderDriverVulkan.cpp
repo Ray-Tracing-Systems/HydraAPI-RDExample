@@ -1472,7 +1472,7 @@ void RD_Vulkan::createDescriptorSets() {
 
     buffersInfo[1].buffer = resolveConstants;
     buffersInfo[1].offset = 0;
-    buffersInfo[1].range = sizeof(float4) * (4 + 3);
+    buffersInfo[1].range = sizeof(float4) * (4 + 4);
 
     std::array<VkDescriptorBufferInfo, 2> lightBuffersInfo;
     lightBuffersInfo[0].buffer = lightingBuffer;
@@ -1678,6 +1678,7 @@ void RD_Vulkan::createLightingBuffer() {
       voxelsGridWeightMats[i][j] = matrix[j];
     }
   }
+  VoxelGridLightingIn.read(reinterpret_cast<char*>(&averageLighting), sizeof(float3));
   VoxelGridLightingIn.close();
 
   lightingBufferSize = static_cast<uint32_t>(sizeof(voxelsGridColors[0]) * voxelsGridColors.size());
@@ -2137,7 +2138,7 @@ void RD_Vulkan::BeginScene(pugi::xml_node a_sceneNode)
 
 void RD_Vulkan::createBuffers() {
   BufferManager::get().createBuffer(sizeof(directLights[0]), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightsBuffer, lightsBufferMemory);
-  BufferManager::get().createBuffer(sizeof(float4) * (4 + 3), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, resolveConstants, resolveConstantsMemory);
+  BufferManager::get().createBuffer(sizeof(float4) * (4 + 4), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, resolveConstants, resolveConstantsMemory);
 }
 
 void RD_Vulkan::EndScene()
@@ -2285,7 +2286,7 @@ void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
   const float4x4 invGlobtm = inverse4x4(globtm);
   std::array<float4, 4> viewVecsData = { invGlobtm.row[0], invGlobtm.row[1], invGlobtm.row[2], invGlobtm.row[3] };
   void* data;
-  vkMapMemory(device, resolveConstantsMemory, 0, sizeof(float4) * (4 + 3), 0, &data);
+  vkMapMemory(device, resolveConstantsMemory, 0, sizeof(float4) * (4 + 4), 0, &data);
   memcpy(data, viewVecsData.data(), sizeof(viewVecsData));
   data = reinterpret_cast<uint8_t*>(data) + sizeof(viewVecsData);
   memcpy(data, &bmin, sizeof(bmin));
@@ -2294,6 +2295,8 @@ void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
   data = reinterpret_cast<uint8_t*>(data) + sizeof(bmax);
   memcpy(data, &gridSize, sizeof(gridSize));
   data = reinterpret_cast<uint8_t*>(data) + sizeof(gridSize);
+  memcpy(data, &averageLighting, sizeof(averageLighting));
+  data = reinterpret_cast<uint8_t*>(data) + sizeof(averageLighting);
   vkUnmapMemory(device, resolveConstantsMemory);
 }
 

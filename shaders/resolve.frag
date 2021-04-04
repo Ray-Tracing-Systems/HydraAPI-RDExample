@@ -19,6 +19,7 @@ layout (binding = 1) uniform DrawConsts {
   vec3 bmin;
   vec3 bmax;
   uvec3 gridSize;
+  vec3 averageLighting;
 };
 
 layout(binding = 2) buffer readonly layout1 { vec4 lightingBuffer[]; };
@@ -65,6 +66,22 @@ vec3 sampleLighting(vec3 worldPos, vec3 normal) {
   vec3 lighting = vec3(0, 0, 0);
   float weightSum = 0.0;
   normal = normalize(normal);
+  bool isEmpty[8];
+  for (uint i = 0; i < 8; ++i) {
+    vec4 row0 = lightingWeightsBuffer[3 * flatIndices[i] + 0];
+    vec4 row1 = lightingWeightsBuffer[3 * flatIndices[i] + 1];
+    vec4 row2 = lightingWeightsBuffer[3 * flatIndices[i] + 2];
+
+    isEmpty[i] = row0.w + row1.w + row2.w < 1e-5;
+    isEmpty[i] = max(dot(row0.xyz, normal), 0.0) * row0.w + max(dot(row1.xyz, normal), 0.0) * row1.w + max(dot(row2.xyz, normal), 0.0) * row2.w < 1e-5;
+  }
+  float lerpWeights[8];
+  for (uint i = 0; i < 8; ++i) {
+    vec3 cellLerps = vec3((i & 1) == 1 ? 1.0 - lerps.x : lerps.x, (i & 2) != 0 ? 1.0 - lerps.y : lerps.y, (i & 4) != 0 ? 1.0 - lerps.z : lerps.z);
+    cellLerps = 1.0 - cellLerps;
+    lerpWeights[i] = (isEmpty[i ^ 0x1] ? 1.0 : cellLerps.x) * (isEmpty[i ^ 0x2] ? 1.0 : cellLerps.y) * (isEmpty[i ^ 0x4] ? 1.0 : cellLerps.z);
+  }
+
   for (uint i = 0; i < 8; ++i) {
     vec4 row0 = lightingWeightsBuffer[3 * flatIndices[i] + 0];
     vec4 row1 = lightingWeightsBuffer[3 * flatIndices[i] + 1];
@@ -78,13 +95,18 @@ vec3 sampleLighting(vec3 worldPos, vec3 normal) {
     vec3 cellLerps = vec3((i & 1) == 1 ? 1.0 - lerps.x : lerps.x, (i & 2) != 0 ? 1.0 - lerps.y : lerps.y, (i & 4) != 0 ? 1.0 - lerps.z : lerps.z);
     cellLerps = 1.0 - cellLerps;
 
-    weights *= cellLerps.x * cellLerps.y * cellLerps.z;
-    lighting.x += dot(lightingBuffer[3 * flatIndices[i] + 0].rgb, weights);
-    lighting.y += dot(lightingBuffer[3 * flatIndices[i] + 1].rgb, weights);
-    lighting.z += dot(lightingBuffer[3 * flatIndices[i] + 2].rgb, weights);
-    weightSum += dot(weights, vec3(1, 1, 1));
+    weights *= lerpWeights[i];
+    vec3 voxelLighting = vec3(
+      dot(lightingBuffer[3 * flatIndices[i] + 0].rgb, weights),
+      dot(lightingBuffer[3 * flatIndices[i] + 1].rgb, weights),
+      dot(lightingBuffer[3 * flatIndices[i] + 2].rgb, weights)
+    );
+    lighting += voxelLighting;
+    float voxelWeight = dot(weights, vec3(1, 1, 1));
+    weightSum += voxelWeight;
   }
-  return lighting / weightSum;
+  lighting /= max(weightSum, 1.0);
+  return mix(averageLighting, lighting, min(1.0, weightSum));
 }
 
 vec3 ComputeLighting(vec3 worldPos, vec3 normal, DirectLight light) {
@@ -110,7 +132,8 @@ void main() {
   if (emissionMult > 0) {
     outColor.rgb = diffuse * emissionMult;
   } else {
-    outColor.rgb = diffuse* (ComputeLighting(unproj.xyz, normal, lights.directLights[0]) + sampleLighting(unproj.xyz, normal));
+    outColor.rgb = diffuse * (ComputeLighting(unproj.xyz, normal, lights.directLights[0]) + sampleLighting(unproj.xyz, normal));
+    //outColor.rgb = sampleLighting(unproj.xyz, normal);
   }
   outColor.rgb = pow(outColor.rgb, vec3(1.0 / 2.2));
 }

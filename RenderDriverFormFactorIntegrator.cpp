@@ -974,7 +974,7 @@ void RD_FFIntegrator::ComputeFF_voxelized(
           }
           const float3 r = sample1.pos - sample2.pos;
           const float lengthSq = dot(r, r);
-          if (lengthSq < 1e-10) {
+          if (lengthSq < 1e-4) {
             continue;
           }
           const float l = std::sqrt(lengthSq);
@@ -1785,15 +1785,30 @@ void RD_FFIntegrator::EndScene() {
 
   std::cout << "Max vox: " << *std::max_element(voxels.begin(), voxels.end()) << std::endl;
 
-  for (int i = static_cast<int>(squares.size()) - 1; i >= 0; --i) {
-    if (squares[i] < 1e-9) {
-      squares.erase(squares.begin() + i);
-      instanceTriangles.erase(instanceTriangles.begin() + i);
-      colors.erase(colors.begin() + i);
-      voxels.erase(voxels.begin() + i);
-      emission.erase(emission.begin() + i);
+  std::vector<bool> compactIndicator(squares.size());
+  std::vector<uint32_t> compactIndices(squares.size(), 0);
+  for (uint32_t i = 0; i < squares.size(); ++i) {
+    compactIndicator[i] = !(squares[i] < 1e-9);
+    if (i > 0) {
+      compactIndices[i] = compactIndices[i - 1] + compactIndicator[i - 1];
     }
   }
+  uint32_t newSize = compactIndices.back() + compactIndicator.back();
+  for (uint32_t i = 0; i < compactIndicator.size(); ++i) {
+    if (!compactIndicator[i]) {
+      continue;
+    }
+    squares[compactIndices[i]] = squares[i];
+    instanceTriangles[compactIndices[i]] = instanceTriangles[i];
+    colors[compactIndices[i]] = colors[i];
+    voxels[compactIndices[i]] = voxels[i];
+    emission[compactIndices[i]] = emission[i];
+  }
+  squares.resize(newSize);
+  instanceTriangles.resize(newSize);
+  colors.resize(newSize);
+  voxels.resize(newSize);
+  emission.resize(newSize);
 
   std::cout << "Max vox: " << *std::max_element(voxels.begin(), voxels.end()) << std::endl;
 
@@ -1838,6 +1853,12 @@ void RD_FFIntegrator::EndScene() {
   std::vector<std::array<float, PATCHES_IN_VOXEL>> inVoxelSquares(gridSize.x* gridSize.y* gridSize.z);
   std::vector<std::array<float3, PATCHES_IN_VOXEL>> inVoxelNormals(gridSize.x* gridSize.y* gridSize.z);
   std::vector<std::array<float4, PATCHES_IN_VOXEL>> inVoxelWeightMatrix(gridSize.x* gridSize.y* gridSize.z);
+
+  float3 averageLighting(0, 0, 0);
+  for (auto l : lighting) {
+    averageLighting += l;
+  }
+  averageLighting /= static_cast<float>(lighting.size());
 
   for (uint32_t i = 0; i < lighting.size(); ++i) {
     const uint32_t voxelId = virtualPatchVoxelId[i];
@@ -1905,6 +1926,7 @@ void RD_FFIntegrator::EndScene() {
   for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
     VoxelGridLightingOut.write(reinterpret_cast<char*>(&inVoxelWeightMatrix[i]), sizeof(inVoxelWeightMatrix[i]));
   }
+  VoxelGridLightingOut.write(reinterpret_cast<char*>(&averageLighting), sizeof(averageLighting));
   VoxelGridLightingOut.close();
 }
 
