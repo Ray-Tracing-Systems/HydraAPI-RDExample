@@ -276,7 +276,7 @@ protected:
   void updateUniformBuffer(uint32_t current_image);
   void createVertexBuffer();
   void createIndexBuffer();
-  void prepareCommandBuffers();
+  void prepareCommandBuffers(uint32_t current_image);
 
   std::wstring m_libPath;
 

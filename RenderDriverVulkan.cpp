@@ -1296,98 +1296,95 @@ void RD_Vulkan::createCommandBuffers() {
   VK_CHECK_RESULT(vkAllocateCommandBuffers(device, &allocInfo, commandBuffers.data()));
 }
 
-void RD_Vulkan::prepareCommandBuffers() {
-  for (int i = 0; i < commandBuffers.size(); ++i)
-  {
-    VkCommandBufferBeginInfo beginInfo = {};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = 0;
-    beginInfo.pInheritanceInfo = nullptr;
-    VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffers[i], &beginInfo));
+void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
+  VkCommandBufferBeginInfo beginInfo = {};
+  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  beginInfo.flags = 0;
+  beginInfo.pInheritanceInfo = nullptr;
+  VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffers[current_image], &beginInfo));
 
-    VkRenderPassBeginInfo gbufferRenderPassBeginInfo = {};
-    gbufferRenderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    gbufferRenderPassBeginInfo.renderPass = gbufferRenderPass;
-    gbufferRenderPassBeginInfo.framebuffer = gbufferFramebuffer;
-    gbufferRenderPassBeginInfo.renderArea.offset = { 0, 0 };
-    gbufferRenderPassBeginInfo.renderArea.extent = swapChainExtent;
-    std::array<VkClearValue, 3> gbufferClearValues = {};
-    gbufferClearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-    gbufferClearValues[1].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-    gbufferClearValues[2].depthStencil = { 1.0f, 0 };
-    gbufferRenderPassBeginInfo.clearValueCount = static_cast<uint32_t>(gbufferClearValues.size());
-    gbufferRenderPassBeginInfo.pClearValues = gbufferClearValues.data();
-    vkCmdBeginRenderPass(commandBuffers[i], &gbufferRenderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+  VkRenderPassBeginInfo gbufferRenderPassBeginInfo = {};
+  gbufferRenderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+  gbufferRenderPassBeginInfo.renderPass = gbufferRenderPass;
+  gbufferRenderPassBeginInfo.framebuffer = gbufferFramebuffer;
+  gbufferRenderPassBeginInfo.renderArea.offset = { 0, 0 };
+  gbufferRenderPassBeginInfo.renderArea.extent = swapChainExtent;
+  std::array<VkClearValue, 3> gbufferClearValues = {};
+  gbufferClearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+  gbufferClearValues[1].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+  gbufferClearValues[2].depthStencil = { 1.0f, 0 };
+  gbufferRenderPassBeginInfo.clearValueCount = static_cast<uint32_t>(gbufferClearValues.size());
+  gbufferRenderPassBeginInfo.pClearValues = gbufferClearValues.data();
+  vkCmdBeginRenderPass(commandBuffers[current_image], &gbufferRenderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+  vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-    VkDeviceSize zeroOffset = 0;
-    vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, &globalVertexBuffer, &zeroOffset);
-    vkCmdBindIndexBuffer(commandBuffers[i], globalIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
-    vkCmdPushConstants(commandBuffers[i], gbufferPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4), &globtm);
-    for (auto& modelInstance : modelInstances) {
-      for (auto& subMeshes : modelInstance.parts) {
-        vkCmdPushConstants(commandBuffers[i], gbufferPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(float4x4), sizeof(float4), &materials[subMeshes.mesh.materialId].color);
-        vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, gbufferPipelineLayout, 0, 1, &materialsLib[subMeshes.mesh.materialId], 0, nullptr);
-        vkCmdDrawIndexed(commandBuffers[i], subMeshes.mesh.incidesCount, subMeshes.matricesCount, subMeshes.mesh.indicesOffset, 0, subMeshes.matricesOffset);
-      }
+  VkDeviceSize zeroOffset = 0;
+  vkCmdBindVertexBuffers(commandBuffers[current_image], 0, 1, &globalVertexBuffer, &zeroOffset);
+  vkCmdBindIndexBuffer(commandBuffers[current_image], globalIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+  vkCmdPushConstants(commandBuffers[current_image], gbufferPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4), &globtm);
+  for (auto& modelInstance : modelInstances) {
+    for (auto& subMeshes : modelInstance.parts) {
+      vkCmdPushConstants(commandBuffers[current_image], gbufferPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(float4x4), sizeof(float4), &materials[subMeshes.mesh.materialId].color);
+      vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, gbufferPipelineLayout, 0, 1, &materialsLib[subMeshes.mesh.materialId], 0, nullptr);
+      vkCmdDrawIndexed(commandBuffers[current_image], subMeshes.mesh.incidesCount, subMeshes.matricesCount, subMeshes.mesh.indicesOffset, 0, subMeshes.matricesOffset);
     }
-
-    vkCmdEndRenderPass(commandBuffers[i]);
-
-    VkRenderPassBeginInfo renderPassBeginInfo = {};
-    renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassBeginInfo.renderPass = resolveRenderPass;
-    renderPassBeginInfo.framebuffer = resolveFramebuffer;
-    renderPassBeginInfo.renderArea.offset = { 0, 0 };
-    renderPassBeginInfo.renderArea.extent = swapChainExtent;
-    std::array<VkClearValue, 1> clearValues = {};
-    clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-    renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
-    renderPassBeginInfo.pClearValues = clearValues.data();
-    vkCmdBeginRenderPass(commandBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-    vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, resolvePipeline);
-    vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, resolvePipelineLayout, 0, 1, &resolveDescriptorSets, 0, nullptr);
-    vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
-
-    vkCmdEndRenderPass(commandBuffers[i]);
-
-    VkImageMemoryBarrier dstBarrier = {};
-    dstBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    dstBarrier.image = frameMipchainImage;
-    dstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    dstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    dstBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    dstBarrier.subresourceRange.baseArrayLayer = 0;
-    dstBarrier.subresourceRange.layerCount = 1;
-    dstBarrier.subresourceRange.levelCount = screenMipLevels;
-    dstBarrier.subresourceRange.baseMipLevel = 0;
-    dstBarrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    dstBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    dstBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    dstBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-
-    vkCmdPipelineBarrier(commandBuffers[i],
-      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-      0, nullptr,
-      0, nullptr,
-      1, &dstBarrier);
-    copy_image(commandBuffers[i], frameImage, frameMipchainImage, swapChainExtent.width, swapChainExtent.height);
-    generate_mipmaps(physicalDevice, commandBuffers[i], frameMipchainImage, VK_FORMAT_R32G32B32A32_SFLOAT, swapChainExtent.width, swapChainExtent.height, screenMipLevels);
-
-    renderPassBeginInfo.renderPass = postprocessRenderPass;
-    renderPassBeginInfo.framebuffer = swapChainFramebuffers[i];
-    vkCmdBeginRenderPass(commandBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-    vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, postprocessPipeline);
-    vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, postprocessPipelineLayout, 0, 1, &postprocessDescriptorSets[i], 0, nullptr);
-    vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
-
-    vkCmdEndRenderPass(commandBuffers[i]);
-
-    VK_CHECK_RESULT(vkEndCommandBuffer(commandBuffers[i]));
   }
+
+  vkCmdEndRenderPass(commandBuffers[current_image]);
+
+  VkRenderPassBeginInfo renderPassBeginInfo = {};
+  renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+  renderPassBeginInfo.renderPass = resolveRenderPass;
+  renderPassBeginInfo.framebuffer = resolveFramebuffer;
+  renderPassBeginInfo.renderArea.offset = { 0, 0 };
+  renderPassBeginInfo.renderArea.extent = swapChainExtent;
+  std::array<VkClearValue, 1> clearValues = {};
+  clearValues[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+  renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+  renderPassBeginInfo.pClearValues = clearValues.data();
+  vkCmdBeginRenderPass(commandBuffers[current_image], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+  vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, resolvePipeline);
+  vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, resolvePipelineLayout, 0, 1, &resolveDescriptorSets, 0, nullptr);
+  vkCmdDraw(commandBuffers[current_image], 3, 1, 0, 0);
+
+  vkCmdEndRenderPass(commandBuffers[current_image]);
+
+  VkImageMemoryBarrier dstBarrier = {};
+  dstBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  dstBarrier.image = frameMipchainImage;
+  dstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  dstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  dstBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  dstBarrier.subresourceRange.baseArrayLayer = 0;
+  dstBarrier.subresourceRange.layerCount = 1;
+  dstBarrier.subresourceRange.levelCount = screenMipLevels;
+  dstBarrier.subresourceRange.baseMipLevel = 0;
+  dstBarrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  dstBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  dstBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  dstBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+  vkCmdPipelineBarrier(commandBuffers[current_image],
+    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+    0, nullptr,
+    0, nullptr,
+    1, &dstBarrier);
+  copy_image(commandBuffers[current_image], frameImage, frameMipchainImage, swapChainExtent.width, swapChainExtent.height);
+  generate_mipmaps(physicalDevice, commandBuffers[current_image], frameMipchainImage, VK_FORMAT_R32G32B32A32_SFLOAT, swapChainExtent.width, swapChainExtent.height, screenMipLevels);
+
+  renderPassBeginInfo.renderPass = postprocessRenderPass;
+  renderPassBeginInfo.framebuffer = swapChainFramebuffers[current_image];
+  vkCmdBeginRenderPass(commandBuffers[current_image], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+  vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, postprocessPipeline);
+  vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, postprocessPipelineLayout, 0, 1, &postprocessDescriptorSets[current_image], 0, nullptr);
+  vkCmdDraw(commandBuffers[current_image], 3, 1, 0, 0);
+
+  vkCmdEndRenderPass(commandBuffers[current_image]);
+
+  VK_CHECK_RESULT(vkEndCommandBuffer(commandBuffers[current_image]));
 }
 
 void RD_Vulkan::createSyncObjects() {
@@ -2281,7 +2278,7 @@ void RD_Vulkan::Draw()
   }
 
   updateUniformBuffer(imageIndex);
-  prepareCommandBuffers();
+  prepareCommandBuffers(imageIndex);
 
   VkSubmitInfo submitInfo = {};
   submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
