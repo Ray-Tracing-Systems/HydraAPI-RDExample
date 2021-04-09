@@ -40,6 +40,7 @@ static double g_scrollY              = 0.0f;
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 Camera       g_cam;
+bool screenShot = false;
 HRCameraRef  camRef;
 HRRenderRef  renderRef;
 
@@ -278,6 +279,9 @@ static void key(GLFWwindow* window, int k, int s, int action, int mods)
 
   case GLFW_KEY_P:
     break;
+
+  case GLFW_KEY_PRINT_SCREEN:
+    screenShot = true;
 
   default:
     return;

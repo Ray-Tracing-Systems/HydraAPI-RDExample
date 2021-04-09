@@ -8,10 +8,12 @@
 #include <array>
 #include <chrono>
 #include <set>
+#include <ctime>
 
 
 #include "RenderDriverVulkan.h"
 #include "LiteMath.h"
+#include "Bitmap.h"
 using namespace HydraLiteMath;
 
 #define GLFW_INCLUDE_VULKAN
@@ -53,6 +55,8 @@ const bool enableValidationLayers = false;
 #else
 const bool enableValidationLayers = true;
 #endif
+
+extern bool screenShot;
 
 struct Vertex {
   float3 pos;
@@ -189,6 +193,8 @@ SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurface
     details.presentModes.resize(presentModeCount);
     vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
   }
+
+  assert(details.capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
 
   return details;
 }
@@ -749,6 +755,36 @@ void RD_Vulkan::BufferManager::copyBufferToImage(VkBuffer buffer, VkImage image,
   );
 }
 
+void RD_Vulkan::BufferManager::copyImageToBuffer(VkImage image, VkBuffer buffer, uint32_t width, uint32_t height) {
+  SingleTimeCommandsContext context;
+
+  VkBufferImageCopy region = {};
+  region.bufferOffset = 0;
+  region.bufferRowLength = 0;
+  region.bufferImageHeight = 0;
+
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.mipLevel = 0;
+  region.imageSubresource.baseArrayLayer = 0;
+  region.imageSubresource.layerCount = 1;
+
+  region.imageOffset = { 0, 0, 0 };
+  region.imageExtent = {
+      width,
+      height,
+      1
+  };
+
+  vkCmdCopyImageToBuffer(
+    context.getCB(),
+    image,
+    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    buffer,
+    1,
+    &region
+  );
+}
+
 // Find a memory in `memoryTypeBitsRequirement` that includes all of `requiredProperties`
 int32_t findProperties(const VkPhysicalDeviceMemoryProperties* pMemoryProperties,
   uint32_t memoryTypeBitsRequirement,
@@ -974,7 +1010,7 @@ void RD_Vulkan::createSwapChain() {
   createInfo.imageColorSpace = surfaceFormat.colorSpace;
   createInfo.imageExtent = extent;
   createInfo.imageArrayLayers = 1;
-  createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
   QueueFamilyIndices familyIndices = GetQueueFamilyIndex();
   uint32_t queueFamilyIndices[] = { familyIndices.graphicsFamily, familyIndices.presentFamily };
@@ -1383,6 +1419,85 @@ void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
   vkCmdDraw(commandBuffers[current_image], 3, 1, 0, 0);
 
   vkCmdEndRenderPass(commandBuffers[current_image]);
+
+  if (screenshotState == ScreenshotState::REQUIRED) {
+    VkDeviceSize imageSize = m_width * m_height * 4;
+
+    BufferManager::get().createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, screenshotBuffer, screenshotBufferMemory);
+
+    VkImageMemoryBarrier dstBarrier = {};
+    dstBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    dstBarrier.image = swapChainImages[current_image];
+    dstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    dstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    dstBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    dstBarrier.subresourceRange.baseArrayLayer = 0;
+    dstBarrier.subresourceRange.layerCount = 1;
+    dstBarrier.subresourceRange.levelCount = 1;
+    dstBarrier.subresourceRange.baseMipLevel = 0;
+    dstBarrier.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    dstBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    dstBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dstBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+    vkCmdPipelineBarrier(commandBuffers[current_image],
+      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+      0, nullptr,
+      0, nullptr,
+      1, &dstBarrier);
+
+    VkBufferImageCopy region = {};
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+
+    region.imageOffset = { 0, 0, 0 };
+    region.imageExtent = {
+        static_cast<uint32_t>(m_width),
+        static_cast<uint32_t>(m_height),
+        1
+    };
+
+    vkCmdCopyImageToBuffer(
+      commandBuffers[current_image],
+      swapChainImages[current_image],
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      screenshotBuffer,
+      1,
+      &region
+    );
+
+    screenshotState = ScreenshotState::IN_PROGRESS;
+    screenshotFrameIdx = current_image;
+
+    {
+      VkImageMemoryBarrier dstBarrier = {};
+      dstBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      dstBarrier.image = swapChainImages[current_image];
+      dstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      dstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      dstBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      dstBarrier.subresourceRange.baseArrayLayer = 0;
+      dstBarrier.subresourceRange.layerCount = 1;
+      dstBarrier.subresourceRange.levelCount = 1;
+      dstBarrier.subresourceRange.baseMipLevel = 0;
+      dstBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+      dstBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+      dstBarrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+      dstBarrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+      vkCmdPipelineBarrier(commandBuffers[current_image],
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+        0, nullptr,
+        0, nullptr,
+        1, &dstBarrier);
+    }
+  }
 
   VK_CHECK_RESULT(vkEndCommandBuffer(commandBuffers[current_image]));
 }
@@ -2179,6 +2294,10 @@ void RD_Vulkan::BeginScene(pugi::xml_node a_sceneNode)
       }
     }
   }
+  if (screenShot && screenshotState == ScreenshotState::OFF) {
+    screenshotState = ScreenshotState::REQUIRED;
+    screenShot = false;
+  }
 }
 
 void RD_Vulkan::createBuffers() {
@@ -2277,6 +2396,41 @@ void RD_Vulkan::Draw()
     throw std::runtime_error("failed to acquire swap chain image!");
   }
 
+  if (screenshotState == ScreenshotState::IN_PROGRESS && imageIndex == screenshotFrameIdx) {
+    VkDeviceSize imageSize = m_width * m_height * 4;
+    std::vector<uint32_t> imageData(imageSize / 4);
+
+    void* data;
+    vkMapMemory(device, screenshotBufferMemory, 0, imageSize, 0, &data);
+    memcpy(imageData.data(), data, static_cast<size_t>(imageSize));
+    vkUnmapMemory(device, screenshotBufferMemory);
+
+    vkDestroyBuffer(device, screenshotBuffer, nullptr);
+    vkFreeMemory(device, screenshotBufferMemory, nullptr);
+
+    for (uint32_t i = 0; i < imageData.size(); ++i) {
+      imageData[i] = ((imageData[i] & 0xFF) << 16) | (((imageData[i] >> 8) & 0xFF) << 8) | (((imageData[i] >> 16) & 0xFF)) | (((imageData[i] >> 24) & 0xFF) << 24);
+    }
+    const uint32_t rowSize = m_width * 4;
+    std::vector<uint32_t> rowBuffer(rowSize);
+    for (uint32_t i = 0; i < m_height / 2; ++i) {
+      memcpy(rowBuffer.data(), &imageData[i * m_width], rowSize);
+      memcpy(&imageData[i * m_width], &imageData[(m_height - i - 1) * m_width], rowSize);
+      memcpy(&imageData[(m_height - i - 1) * m_width], rowBuffer.data(), rowSize);
+    }
+    auto end = std::chrono::system_clock::now();
+    std::time_t end_time = std::chrono::system_clock::to_time_t(end);
+    std::tm* time = std::localtime(&end_time);
+
+    char dateBuffer[1024];
+    sprintf(dateBuffer, "%d.%02d.%02d_%02d.%02d.%02d.bmp", time->tm_year + 1900, time->tm_mon + 1, time->tm_mday, time->tm_hour, time->tm_min, time->tm_sec);
+
+    SaveBMP(dateBuffer, imageData.data(), m_width, m_height);
+    std::cout << "Screenshot saved to file " << dateBuffer << std::endl;
+
+    screenshotState = ScreenshotState::OFF;
+  }
+
   updateUniformBuffer(imageIndex);
   prepareCommandBuffers(imageIndex);
 
@@ -2292,6 +2446,7 @@ void RD_Vulkan::Draw()
   submitInfo.pSignalSemaphores = &renderFinishedSemaphores[currentFrame];
   vkResetFences(device, 1, &inFlightFences[currentFrame]);
   VK_CHECK_RESULT(vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]));
+
   VkPresentInfoKHR presentInfo = {};
   presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
   presentInfo.swapchainCount = 1;
@@ -2302,9 +2457,10 @@ void RD_Vulkan::Draw()
   result = vkQueuePresentKHR(graphicsQueue, &presentInfo);
 
   if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-      recreateSwapChain();
-  } else if (result != VK_SUCCESS) {
-      throw std::runtime_error("failed to present swap chain image!");
+    recreateSwapChain();
+  }
+  else if (result != VK_SUCCESS) {
+    throw std::runtime_error("failed to present swap chain image!");
   }
 
   currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -2414,4 +2570,31 @@ void RD_Vulkan::GetFrameBufferHDR(int32_t w, int32_t h, float*   a_out, const wc
 
 void RD_Vulkan::GetFrameBufferLDR(int32_t w, int32_t h, int32_t* a_out)
 {
+}
+
+void RD_Vulkan::tryToSaveScreenshot(uint32_t image_index) {
+  if (!screenShot) {
+    return;
+  }
+
+  screenShot = false;
+
+  VkDeviceSize imageSize = m_width * m_height * 4;
+  std::vector<uint32_t> imageData(imageSize / 4);
+
+  VkBuffer stagingBuffer;
+  VkDeviceMemory stagingBufferMemory;
+
+  BufferManager::get().createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+  BufferManager::get().transitionImageLayout(swapChainImages[image_index], swapChainImageFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 1);
+  BufferManager::get().copyImageToBuffer(swapChainImages[image_index], stagingBuffer, m_width, m_height);
+
+  void* data;
+  vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
+  memcpy(imageData.data(), data, static_cast<size_t>(imageSize));
+  vkUnmapMemory(device, stagingBufferMemory);
+
+  vkDestroyBuffer(device, stagingBuffer, nullptr);
+  vkFreeMemory(device, stagingBufferMemory, nullptr);
 }

@@ -66,6 +66,12 @@ public:
   }
 };
 
+enum class ScreenshotState {
+  OFF,
+  REQUIRED,
+  IN_PROGRESS
+};
+
 struct RD_Vulkan : public IHRRenderDriver
 {
   RD_Vulkan();
@@ -173,6 +179,7 @@ protected:
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
     void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels);
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+    void copyImageToBuffer(VkImage image, VkBuffer buffer, uint32_t width, uint32_t height);
     void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels);
 
     VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels);
@@ -277,6 +284,7 @@ protected:
   void createVertexBuffer();
   void createIndexBuffer();
   void prepareCommandBuffers(uint32_t current_image);
+  void tryToSaveScreenshot(uint32_t image_index);
 
   std::wstring m_libPath;
 
@@ -393,4 +401,8 @@ protected:
   VkDeviceMemory matricesBufferMemory = {};
   HydraLiteMath::float4x4 globtm;
   uint32_t screenMipLevels = 0;
+  ScreenshotState screenshotState = ScreenshotState::OFF;
+  VkBuffer screenshotBuffer = {};
+  VkDeviceMemory screenshotBufferMemory = {};
+  uint32_t screenshotFrameIdx;
 };
