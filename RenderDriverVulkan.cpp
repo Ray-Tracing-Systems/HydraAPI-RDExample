@@ -57,6 +57,8 @@ const bool enableValidationLayers = true;
 #endif
 
 extern bool screenShot;
+extern bool screenshotAndExit;
+extern bool reloadShaders;
 
 struct Vertex {
   float3 pos;
@@ -1562,12 +1564,7 @@ void RD_Vulkan::cleanupSwapChain() {
   }
   vkFreeCommandBuffers(device, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
 
-  vkDestroyPipeline(device, graphicsPipeline, nullptr);
-  vkDestroyPipeline(device, resolvePipeline, nullptr);
-  vkDestroyPipeline(device, postprocessPipeline, nullptr);
-  vkDestroyPipelineLayout(device, gbufferPipelineLayout, nullptr);
-  vkDestroyPipelineLayout(device, resolvePipelineLayout, nullptr);
-  vkDestroyPipelineLayout(device, postprocessPipelineLayout, nullptr);
+  destroyPipelines();
   vkDestroyRenderPass(device, gbufferRenderPass, nullptr);
   vkDestroyRenderPass(device, resolveRenderPass, nullptr);
   vkDestroyRenderPass(device, postprocessRenderPass, nullptr);
@@ -2294,7 +2291,7 @@ void RD_Vulkan::BeginScene(pugi::xml_node a_sceneNode)
       }
     }
   }
-  if (screenShot && screenshotState == ScreenshotState::OFF) {
+  if ((screenShot || screenshotAndExit) && screenshotState == ScreenshotState::OFF) {
     screenshotState = ScreenshotState::REQUIRED;
     screenShot = false;
   }
@@ -2307,6 +2304,10 @@ void RD_Vulkan::createBuffers() {
 
 void RD_Vulkan::EndScene()
 {
+  if (reloadShaders) {
+    recreateShaders();
+    reloadShaders = false;
+  }
   if (inited) {
     return;
   }
@@ -2429,6 +2430,9 @@ void RD_Vulkan::Draw()
     std::cout << "Screenshot saved to file " << dateBuffer << std::endl;
 
     screenshotState = ScreenshotState::OFF;
+    if (screenshotAndExit) {
+      exit(0);
+    }
   }
 
   updateUniformBuffer(imageIndex);
@@ -2572,29 +2576,16 @@ void RD_Vulkan::GetFrameBufferLDR(int32_t w, int32_t h, int32_t* a_out)
 {
 }
 
-void RD_Vulkan::tryToSaveScreenshot(uint32_t image_index) {
-  if (!screenShot) {
-    return;
-  }
+void RD_Vulkan::recreateShaders() {
+  destroyPipelines();
+  createPipelines();
+}
 
-  screenShot = false;
-
-  VkDeviceSize imageSize = m_width * m_height * 4;
-  std::vector<uint32_t> imageData(imageSize / 4);
-
-  VkBuffer stagingBuffer;
-  VkDeviceMemory stagingBufferMemory;
-
-  BufferManager::get().createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-  BufferManager::get().transitionImageLayout(swapChainImages[image_index], swapChainImageFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 1);
-  BufferManager::get().copyImageToBuffer(swapChainImages[image_index], stagingBuffer, m_width, m_height);
-
-  void* data;
-  vkMapMemory(device, stagingBufferMemory, 0, imageSize, 0, &data);
-  memcpy(imageData.data(), data, static_cast<size_t>(imageSize));
-  vkUnmapMemory(device, stagingBufferMemory);
-
-  vkDestroyBuffer(device, stagingBuffer, nullptr);
-  vkFreeMemory(device, stagingBufferMemory, nullptr);
+void RD_Vulkan::destroyPipelines() {
+  vkDestroyPipeline(device, graphicsPipeline, nullptr);
+  vkDestroyPipeline(device, resolvePipeline, nullptr);
+  vkDestroyPipeline(device, postprocessPipeline, nullptr);
+  vkDestroyPipelineLayout(device, gbufferPipelineLayout, nullptr);
+  vkDestroyPipelineLayout(device, resolvePipelineLayout, nullptr);
+  vkDestroyPipelineLayout(device, postprocessPipelineLayout, nullptr);
 }

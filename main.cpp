@@ -93,6 +93,7 @@ void sig_handler(int signo)
 }
 #endif
 
+bool screenshotAndExit = false;
 
 int main(int argc, const char** argv)
 {
@@ -105,7 +106,13 @@ int main(int argc, const char** argv)
 
   std::string workingDir = "..";
   if(argc > 1)
-    workingDir = std::string(argv[1]);
+  {
+    for (uint32_t i = 1; i < argc; ++i) {
+      if (argv[i] == std::string("-p")) {
+        screenshotAndExit = true;
+      }
+    }
+  }
 
   atexit(&destroy);                           // if application will terminated you have to call hrSceneLibraryClose to free all connections with hydra.exe
 #if defined WIN32

@@ -41,6 +41,7 @@ static double g_scrollY              = 0.0f;
 
 Camera       g_cam;
 bool screenShot = false;
+bool reloadShaders = false;
 HRCameraRef  camRef;
 HRRenderRef  renderRef;
 
@@ -228,6 +229,7 @@ static void key(GLFWwindow* window, int k, int s, int action, int mods)
   g_input.camMoveSpeed = 7.5f;
   switch (k) {
   case GLFW_KEY_Z:
+    reloadShaders = true;
     break;
   case GLFW_KEY_ESCAPE:
     glfwSetWindowShouldClose(window, true);

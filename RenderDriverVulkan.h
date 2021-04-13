@@ -284,7 +284,8 @@ protected:
   void createVertexBuffer();
   void createIndexBuffer();
   void prepareCommandBuffers(uint32_t current_image);
-  void tryToSaveScreenshot(uint32_t image_index);
+  void recreateShaders();
+  void destroyPipelines();
 
   std::wstring m_libPath;
 
