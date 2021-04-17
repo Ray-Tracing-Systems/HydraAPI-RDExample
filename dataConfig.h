@@ -4,6 +4,8 @@
 
 class DataConfig {
   std::wstring folder;
+  std::wstring sceneName;
+  uint32_t voxelSize;
   bool useExposure = false;
   DataConfig() = default;
   ~DataConfig() = default;
@@ -12,6 +14,8 @@ public:
 
 
   void init(int argc, const char **argv, const std::wstring& scene_name, uint32_t voxel_size) {
+    sceneName = scene_name;
+    voxelSize = voxel_size;
     const std::wstring scenesFolder = L"ScenesData/";
     if (!std::filesystem::exists(scenesFolder)) {
       std::filesystem::create_directory(scenesFolder);
@@ -45,6 +49,12 @@ public:
 
   std::wstring getBinFilePath(const std::wstring& filename) const {
     return folder + L"/" + filename;
+  }
+
+  static std::wstring getScreenShotPrefix() {
+    std::wstringstream ss;
+    ss << get().sceneName << "_" << get().voxelSize;
+    return ss.str();
   }
 
   bool hasExposure() const { return useExposure; };

@@ -2604,7 +2604,8 @@ void RD_Vulkan::Draw()
     std::tm* time = std::localtime(&end_time);
 
     char dateBuffer[1024];
-    sprintf(dateBuffer, "%d.%02d.%02d_%02d.%02d.%02d.bmp", time->tm_year + 1900, time->tm_mon + 1, time->tm_mday, time->tm_hour, time->tm_min, time->tm_sec);
+    const auto prefix = DataConfig::getScreenShotPrefix();
+    sprintf(dateBuffer, "Screenshots/%ws_%d.%02d.%02d_%02d.%02d.%02d.bmp", prefix.c_str(), time->tm_year + 1900, time->tm_mon + 1, time->tm_mday, time->tm_hour, time->tm_min, time->tm_sec);
 
     SaveBMP(dateBuffer, imageData.data(), m_width, m_height);
     std::cout << "Screenshot saved to file " << dateBuffer << std::endl;
