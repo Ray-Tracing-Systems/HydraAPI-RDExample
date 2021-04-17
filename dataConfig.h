@@ -4,13 +4,14 @@
 
 class DataConfig {
   std::wstring folder;
+  bool useExposure = false;
   DataConfig() = default;
   ~DataConfig() = default;
 public:
   static const uint32_t FF_VERSION = 8;
 
 
-  void init(const std::wstring& scene_name, uint32_t voxel_size) {
+  void init(int argc, const char **argv, const std::wstring& scene_name, uint32_t voxel_size) {
     const std::wstring scenesFolder = L"ScenesData/";
     if (!std::filesystem::exists(scenesFolder)) {
       std::filesystem::create_directory(scenesFolder);
@@ -27,6 +28,14 @@ public:
         std::filesystem::create_directory(folder);
       }
     }
+    if (argc > 1)
+    {
+      for (int i = 1; i < argc; ++i) {
+        if (argv[i] == std::string("-e")) {
+          useExposure = true;
+        }
+      }
+    }
   }
 
   static DataConfig& get() {
@@ -34,7 +43,9 @@ public:
     return instance;
   }
 
-  std::wstring getBinFilePath(const std::wstring& filename) {
+  std::wstring getBinFilePath(const std::wstring& filename) const {
     return folder + L"/" + filename;
   }
+
+  bool hasExposure() const { return useExposure; };
 };

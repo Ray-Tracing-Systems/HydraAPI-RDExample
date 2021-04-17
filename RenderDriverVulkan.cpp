@@ -1377,8 +1377,8 @@ void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
 
   VkRenderPassBeginInfo renderPassBeginInfo = {};
   renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-  renderPassBeginInfo.renderPass = resolveRenderPass;
-  renderPassBeginInfo.framebuffer = resolveFramebuffer;
+  renderPassBeginInfo.renderPass = DataConfig::get().hasExposure() ? resolveRenderPass : postprocessRenderPass;
+  renderPassBeginInfo.framebuffer = DataConfig::get().hasExposure() ? resolveFramebuffer : swapChainFramebuffers[current_image];
   renderPassBeginInfo.renderArea.offset = { 0, 0 };
   renderPassBeginInfo.renderArea.extent = swapChainExtent;
   std::array<VkClearValue, 1> clearValues = {};
@@ -1393,38 +1393,40 @@ void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
 
   vkCmdEndRenderPass(commandBuffers[current_image]);
 
-  VkImageMemoryBarrier dstBarrier = {};
-  dstBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  dstBarrier.image = frameMipchainImage;
-  dstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  dstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  dstBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  dstBarrier.subresourceRange.baseArrayLayer = 0;
-  dstBarrier.subresourceRange.layerCount = 1;
-  dstBarrier.subresourceRange.levelCount = screenMipLevels;
-  dstBarrier.subresourceRange.baseMipLevel = 0;
-  dstBarrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-  dstBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-  dstBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-  dstBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+  if (DataConfig::get().hasExposure()) {
+    VkImageMemoryBarrier dstBarrier = {};
+    dstBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    dstBarrier.image = frameMipchainImage;
+    dstBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    dstBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    dstBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    dstBarrier.subresourceRange.baseArrayLayer = 0;
+    dstBarrier.subresourceRange.layerCount = 1;
+    dstBarrier.subresourceRange.levelCount = screenMipLevels;
+    dstBarrier.subresourceRange.baseMipLevel = 0;
+    dstBarrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    dstBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    dstBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    dstBarrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 
-  vkCmdPipelineBarrier(commandBuffers[current_image],
-    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-    0, nullptr,
-    0, nullptr,
-    1, &dstBarrier);
-  copy_image(commandBuffers[current_image], frameImage, frameMipchainImage, swapChainExtent.width, swapChainExtent.height);
-  generate_mipmaps(physicalDevice, commandBuffers[current_image], frameMipchainImage, VK_FORMAT_R32G32B32A32_SFLOAT, swapChainExtent.width, swapChainExtent.height, screenMipLevels);
+    vkCmdPipelineBarrier(commandBuffers[current_image],
+      VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+      0, nullptr,
+      0, nullptr,
+      1, &dstBarrier);
+    copy_image(commandBuffers[current_image], frameImage, frameMipchainImage, swapChainExtent.width, swapChainExtent.height);
+    generate_mipmaps(physicalDevice, commandBuffers[current_image], frameMipchainImage, VK_FORMAT_R32G32B32A32_SFLOAT, swapChainExtent.width, swapChainExtent.height, screenMipLevels);
 
-  renderPassBeginInfo.renderPass = postprocessRenderPass;
-  renderPassBeginInfo.framebuffer = swapChainFramebuffers[current_image];
-  vkCmdBeginRenderPass(commandBuffers[current_image], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+    renderPassBeginInfo.renderPass = postprocessRenderPass;
+    renderPassBeginInfo.framebuffer = swapChainFramebuffers[current_image];
+    vkCmdBeginRenderPass(commandBuffers[current_image], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-  vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, postprocessPipeline);
-  vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, postprocessPipelineLayout, 0, 1, &postprocessDescriptorSets[current_image], 0, nullptr);
-  vkCmdDraw(commandBuffers[current_image], 3, 1, 0, 0);
+    vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, postprocessPipeline);
+    vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, postprocessPipelineLayout, 0, 1, &postprocessDescriptorSets[current_image], 0, nullptr);
+    vkCmdDraw(commandBuffers[current_image], 3, 1, 0, 0);
 
-  vkCmdEndRenderPass(commandBuffers[current_image]);
+    vkCmdEndRenderPass(commandBuffers[current_image]);
+  }
 
   if (screenshotState == ScreenshotState::REQUIRED) {
     VkDeviceSize imageSize = m_width * m_height * 4;
@@ -1601,7 +1603,7 @@ void RD_Vulkan::createPipelines() {
   PipelineConfig resolveConfig;
   resolveConfig.vertexShaderPath = "shaders/full_screen.spv";
   resolveConfig.pixelShaderPath = "shaders/resolve.spv";
-  resolveConfig.renderPass = resolveRenderPass;
+  resolveConfig.renderPass = DataConfig::get().hasExposure() ? resolveRenderPass : postprocessRenderPass;
   resolveConfig.descriptorSetLayout = resolveDescriptorSetLayout;
   resolvePipeline = createGraphicsPipeline(resolveConfig, resolvePipelineLayout);
 

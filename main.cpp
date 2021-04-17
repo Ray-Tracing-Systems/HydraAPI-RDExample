@@ -155,7 +155,7 @@ int main(int argc, const char** argv)
   
   std::cout << "sizeof(size_t) = " << sizeof(size_t) <<std::endl;
 
-  float voxelSize = 0.5 / 2;
+  float voxelSize = 0.5 / 8;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "-voxelSize") == 0 && i + 1 < argc) {
       voxelSize = std::stof(argv[i + 1]);
@@ -182,7 +182,7 @@ int main(int argc, const char** argv)
   //const std::wstring scene = L"05_Sponza";
   //const std::wstring scene = L"test_42"; // 0.5
   //const std::wstring scene = L"04_CornellBoxWithSeveralComplexShape"; // 0.5
-  DataConfig::get().init(scene, scaledVoxelSize);
+  DataConfig::get().init(argc, argv, scene, scaledVoxelSize);
   window_main_voxel_tessellator(L"../Diser/DiffuseReference/", scene, voxelSize);
   //window_main_ff_integrator(L"Tessellated", scene);
   window_main_ff_integrator(L"Tessellated", scene);
