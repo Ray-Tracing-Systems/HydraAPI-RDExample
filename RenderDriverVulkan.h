@@ -66,6 +66,12 @@ public:
   }
 };
 
+enum class ScreenshotState {
+  OFF,
+  REQUIRED,
+  IN_PROGRESS
+};
+
 struct RD_Vulkan : public IHRRenderDriver
 {
   RD_Vulkan();
@@ -174,6 +180,7 @@ protected:
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
     void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels);
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+    void copyImageToBuffer(VkImage image, VkBuffer buffer, uint32_t width, uint32_t height);
     void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels);
 
     VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels);
@@ -257,6 +264,7 @@ protected:
   VkPipeline createGraphicsPipeline(const PipelineConfig&, VkPipelineLayout& layout);
   void createGbufferRenderPass();
   void createResolveRenderPass();
+  void createPostprocessRenderPass();
   void createFramebuffers();
   void createCommandPool();
   void createCommandBuffers();
@@ -278,8 +286,10 @@ protected:
   void updateUniformBuffer(uint32_t current_image);
   void createVertexBuffer();
   void createIndexBuffer();
-  void prepareCommandBuffers();
   void prepareDebugPoints();
+  void prepareCommandBuffers(uint32_t current_image);
+  void recreateShaders();
+  void destroyPipelines();
 
   std::wstring m_libPath;
 
@@ -319,18 +329,24 @@ protected:
   std::vector<VkImageView> swapChainImageViews;
   std::vector<VkFramebuffer> swapChainFramebuffers;
   VkFramebuffer gbufferFramebuffer;
+  VkFramebuffer resolveFramebuffer;
   VkFormat swapChainImageFormat;
   VkExtent2D swapChainExtent;
   VkDescriptorSetLayout gbufferDescriptorSetLayout;
-  VkDescriptorSetLayout descriptorSetLayout;
+  VkDescriptorSetLayout resolveDescriptorSetLayout;
+  VkDescriptorSetLayout postprocessDescriptorSetLayout;
+  VkDescriptorSetLayout debugPointsDescriptorSetLayout;
   VkPipelineLayout gbufferPipelineLayout;
-  VkPipelineLayout pipelineLayout;
   VkPipelineLayout debugPointsPipelineLayout;
+  VkPipelineLayout resolvePipelineLayout;
+  VkPipelineLayout postprocessPipelineLayout;
   VkRenderPass gbufferRenderPass;
   VkRenderPass resolveRenderPass;
+  VkRenderPass postprocessRenderPass;
   VkPipeline graphicsPipeline;
   VkPipeline resolvePipeline;
   VkPipeline debugPointsPipeline;
+  VkPipeline postprocessPipeline;
   VkCommandPool commandPool;
 
   VkImage depthImage;
@@ -348,9 +364,21 @@ protected:
   VkImageView normalImageView;
   VkSampler normalImageSampler;
 
-  VkDescriptorPool descriptorPool;
+  VkImage frameImage;
+  VkDeviceMemory frameImageMemory;
+  VkImageView frameImageView;
+  VkSampler frameImageSampler;
+
+  VkImage frameMipchainImage;
+  VkDeviceMemory frameMipchainImageMemory;
+  VkImageView frameMipchainImageView;
+  VkSampler frameMipchainImageSampler;
+
+  VkDescriptorPool resolveDescriptorPool = {};
+  VkDescriptorPool postprocessDescriptorPool = {};
   VkDescriptorPool gbufferDescriptorPool = {};
-  std::vector<VkDescriptorSet> descriptorSets;
+  VkDescriptorSet resolveDescriptorSets;
+  std::vector<VkDescriptorSet> postprocessDescriptorSets;
 
   size_t currentFrame = 0;
   bool inited = false;
@@ -396,4 +424,10 @@ protected:
   HydraLiteMath::float4 bmin;
   HydraLiteMath::float4 bmax;
   HydraLiteMath::float4 averageLighting;
+
+  uint32_t screenMipLevels = 0;
+  ScreenshotState screenshotState = ScreenshotState::OFF;
+  VkBuffer screenshotBuffer = {};
+  VkDeviceMemory screenshotBufferMemory = {};
+  uint32_t screenshotFrameIdx;
 };
