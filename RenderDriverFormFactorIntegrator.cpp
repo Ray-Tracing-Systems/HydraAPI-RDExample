@@ -1037,8 +1037,7 @@ void RD_FFIntegrator::ComputeFF_voxelized(
       }
     }
 
-    const uint32_t MAX_VIRTUAL_PATCHES = 3;
-    while (samples1.size() > MAX_VIRTUAL_PATCHES) {
+    while (samples1.size() > DataConfig::MAX_VIRTUAL_PATCHES) {
       std::pair<uint32_t, uint32_t> bestMatched(0, 0);
       float bestSimilarity = 1e9f;
       for (uint32_t i = 0; i < samples1.size() - 1; ++i) {
@@ -1848,11 +1847,10 @@ void RD_FFIntegrator::EndScene() {
 
   auto lighting = ComputeLightingClassic(emission, colors);
   //auto lighting = ComputeLightingRandom(emission, colors);
-  const uint32_t PATCHES_IN_VOXEL = 3;
-  std::vector<std::array<float3, PATCHES_IN_VOXEL>> voxelsGridColors(gridSize.x * gridSize.y * gridSize.z);
-  std::vector<std::array<float, PATCHES_IN_VOXEL>> inVoxelSquares(gridSize.x* gridSize.y* gridSize.z);
-  std::vector<std::array<float3, PATCHES_IN_VOXEL>> inVoxelNormals(gridSize.x* gridSize.y* gridSize.z);
-  std::vector<std::array<float4, PATCHES_IN_VOXEL>> inVoxelWeightMatrix(gridSize.x* gridSize.y* gridSize.z);
+  std::vector<std::array<float3, DataConfig::MAX_VIRTUAL_PATCHES>> voxelsGridColors(gridSize.x * gridSize.y * gridSize.z);
+  std::vector<std::array<float, DataConfig::MAX_VIRTUAL_PATCHES>> inVoxelSquares(gridSize.x* gridSize.y* gridSize.z);
+  std::vector<std::array<float3, DataConfig::MAX_VIRTUAL_PATCHES>> inVoxelNormals(gridSize.x* gridSize.y* gridSize.z);
+  std::vector<std::array<float4, DataConfig::MAX_VIRTUAL_PATCHES>> inVoxelWeightMatrix(gridSize.x* gridSize.y* gridSize.z);
 
   float3 averageLighting(0, 0, 0);
   for (auto l : lighting) {
@@ -1865,7 +1863,7 @@ void RD_FFIntegrator::EndScene() {
     float square = 1.0f;// squares[i];
     float3 light = lighting[i];
     float3 normal = normals[i];
-    for (uint32_t j = 0; j < PATCHES_IN_VOXEL; ++j) {
+    for (uint32_t j = 0; j < DataConfig::MAX_VIRTUAL_PATCHES; ++j) {
       if (square > inVoxelSquares[voxelId][j]) {
         std::swap(square, inVoxelSquares[voxelId][j]);
         std::swap(light, voxelsGridColors[voxelId][j]);
@@ -1874,13 +1872,16 @@ void RD_FFIntegrator::EndScene() {
     }
   }
   for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
-    for (uint32_t j = 1; j < PATCHES_IN_VOXEL; ++j) {
+    for (uint32_t j = 1; j < DataConfig::MAX_VIRTUAL_PATCHES; ++j) {
       if (inVoxelSquares[i][j] < 1e-9f) {
         voxelsGridColors[i][j] = voxelsGridColors[i][0];
       }
     }
     
-    std::array<bool, 3> basisVecExist = {true, true, true};
+    std::array<bool, DataConfig::MAX_VIRTUAL_PATCHES> basisVecExist = { true };
+    for (auto& bas : basisVecExist) {
+      bas = true;
+    }
     const float EPS = 1e-5f;
     basisVecExist[0] = dot(inVoxelNormals[i][0], inVoxelNormals[i][0]) > EPS;
     if (basisVecExist[0]) {
@@ -1894,24 +1895,18 @@ void RD_FFIntegrator::EndScene() {
         inVoxelNormals[i][2] = normalize(cross(inVoxelNormals[i][0], inVoxelNormals[i][1]));
         basisVecExist[2] = false;
       }
+      for (uint32_t j = 3; j < DataConfig::MAX_VIRTUAL_PATCHES; ++j) {
+        if (length(inVoxelNormals[i][j]) < EPS) {
+          basisVecExist[j] = false;
+        }
+      }
     } else {
-      basisVecExist[1] = basisVecExist[2] = false;
+      for (auto& bas : basisVecExist) {
+        bas = false;
+      }
     }
 
-    std::array<float2, 3> normalsIn2d;
-    for (uint32_t j = 0; j < normalsIn2d.size(); ++j) {
-      normalsIn2d[j] = getAnglesForNormal(inVoxelNormals[i][j]);
-    }
-
-    float4x4 normalsMat4x4;
-    normalsMat4x4.row[0] = float4(normalsIn2d[0].x, normalsIn2d[1].x, normalsIn2d[2].x, 0);
-    normalsMat4x4.row[1] = float4(normalsIn2d[0].y, normalsIn2d[1].y, normalsIn2d[2].y, 0);
-    normalsMat4x4.row[2] = float4(1, 1, 1, 0);
-    normalsMat4x4.row[3] = float4(0, 0, 0, 1);
-    float4x4 weightMat4x4 = inverse4x4(normalsMat4x4);
-    for (uint32_t j = 0; j < 3; ++j) {
-      //inVoxelWeightMatrix[i][j] = weightMat4x4.row[j];
-      //inVoxelWeightMatrix[i][j].w = basisVecExist[j] ? 1.0f : 0.0f;
+    for (uint32_t j = 0; j < DataConfig::MAX_VIRTUAL_PATCHES; ++j) {
       inVoxelWeightMatrix[i][j] = to_float4(inVoxelNormals[i][j], basisVecExist[j] ? 1.0f : 0.0f);
     }
   }

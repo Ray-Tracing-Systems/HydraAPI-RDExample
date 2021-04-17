@@ -5,12 +5,13 @@
 class DataConfig {
   std::wstring folder;
   std::wstring sceneName;
-  uint32_t voxelSize;
+  uint32_t voxelSize = 0;
   bool useExposure = false;
   DataConfig() = default;
   ~DataConfig() = default;
 public:
   static const uint32_t FF_VERSION = 8;
+  static const uint32_t MAX_VIRTUAL_PATCHES = 4;
 
 
   void init(int argc, const char **argv, const std::wstring& scene_name, uint32_t voxel_size) {

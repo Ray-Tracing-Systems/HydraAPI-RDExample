@@ -1986,21 +1986,23 @@ void RD_Vulkan::createLightingBuffer() {
   VoxelGridLightingIn.read(reinterpret_cast<char*>(&boxmax), sizeof(boxmax));
   bmin = to_float4(boxmin, 1);
   bmax = to_float4(boxmax, 1);
-  const uint32_t PATCHES_IN_VOXEL = 3;
-  std::vector<std::array<float4, PATCHES_IN_VOXEL>> voxelsGridColors(gridSize.x * gridSize.y * gridSize.z);
-  std::vector<std::array<float4, PATCHES_IN_VOXEL>> voxelsGridWeightMats(gridSize.x * gridSize.y * gridSize.z);
+  std::vector<std::array<float4, DataConfig::MAX_VIRTUAL_PATCHES>> voxelsGridColors(gridSize.x * gridSize.y * gridSize.z);
+  std::vector<std::array<float4, DataConfig::MAX_VIRTUAL_PATCHES>> voxelsGridWeightMats(gridSize.x * gridSize.y * gridSize.z);
   for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
-    std::array<float3, PATCHES_IN_VOXEL> colors;
+    std::array<float3, DataConfig::MAX_VIRTUAL_PATCHES> colors;
     for (uint32_t j = 0; j < colors.size(); ++j) {
       VoxelGridLightingIn.read(reinterpret_cast<char*>(&colors[j]), sizeof(colors[j]));
     }
-    voxelsGridColors[i][0] = float4(colors[0].x, colors[1].x, colors[2].x, 0);
-    voxelsGridColors[i][1] = float4(colors[0].y, colors[1].y, colors[2].y, 0);
-    voxelsGridColors[i][2] = float4(colors[0].z, colors[1].z, colors[2].z, 0);
+    for (uint32_t j = 0; j < DataConfig::MAX_VIRTUAL_PATCHES; ++j) {
+      voxelsGridColors[i][j] = to_float4(colors[j], 0);
+    }
+    //voxelsGridColors[i][0] = float4(colors[0].x, colors[1].x, colors[2].x, 0);
+    //voxelsGridColors[i][1] = float4(colors[0].y, colors[1].y, colors[2].y, 0);
+    //voxelsGridColors[i][2] = float4(colors[0].z, colors[1].z, colors[2].z, 0);
   }
   for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
-    std::array<float4, PATCHES_IN_VOXEL> matrix;
-    for (uint32_t j = 0; j < PATCHES_IN_VOXEL; ++j) {
+    std::array<float4, DataConfig::MAX_VIRTUAL_PATCHES> matrix;
+    for (uint32_t j = 0; j < DataConfig::MAX_VIRTUAL_PATCHES; ++j) {
       VoxelGridLightingIn.read(reinterpret_cast<char*>(&matrix[j]), sizeof(matrix[j]));
       voxelsGridWeightMats[i][j] = matrix[j];
     }

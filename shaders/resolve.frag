@@ -22,6 +22,8 @@ layout (binding = 1) uniform DrawConsts {
   vec3 averageLighting;
 };
 
+const int MAX_VIRTUAL_PATCHES = 4;
+
 layout(binding = 2) buffer readonly layout1 { vec4 lightingBuffer[]; };
 layout(binding = 3) buffer readonly layout2 { vec4 lightingWeightsBuffer[]; };
 
@@ -68,12 +70,11 @@ vec3 sampleLighting(vec3 worldPos, vec3 normal) {
   normal = normalize(normal);
   bool isEmpty[8];
   for (uint i = 0; i < 8; ++i) {
-    vec4 row0 = lightingWeightsBuffer[3 * flatIndices[i] + 0];
-    vec4 row1 = lightingWeightsBuffer[3 * flatIndices[i] + 1];
-    vec4 row2 = lightingWeightsBuffer[3 * flatIndices[i] + 2];
-
-    isEmpty[i] = row0.w + row1.w + row2.w < 1e-5;
-    isEmpty[i] = max(dot(row0.xyz, normal), 0.0) * row0.w + max(dot(row1.xyz, normal), 0.0) * row1.w + max(dot(row2.xyz, normal), 0.0) * row2.w < 1e-5;
+    isEmpty[i] = true;
+    for (int j = 0; j < MAX_VIRTUAL_PATCHES; ++j) {
+      vec4 row0 = lightingWeightsBuffer[MAX_VIRTUAL_PATCHES * flatIndices[i] + j];
+      isEmpty[i] = isEmpty[i] && max(dot(row0.xyz, normal), 0.0) * row0.w < 1e-5;
+    }
   }
   float lerpWeights[8];
   for (uint i = 0; i < 8; ++i) {
@@ -83,26 +84,15 @@ vec3 sampleLighting(vec3 worldPos, vec3 normal) {
   }
 
   for (uint i = 0; i < 8; ++i) {
-    vec4 row0 = lightingWeightsBuffer[3 * flatIndices[i] + 0];
-    vec4 row1 = lightingWeightsBuffer[3 * flatIndices[i] + 1];
-    vec4 row2 = lightingWeightsBuffer[3 * flatIndices[i] + 2];
-
-    vec3 weights = vec3(0, 0, 0);
-    weights.x = max(dot(row0.xyz, normal), 0.0) * row0.w;
-    weights.y = max(dot(row1.xyz, normal), 0.0) * row1.w;
-    weights.z = max(dot(row2.xyz, normal), 0.0) * row2.w;
-
-    vec3 cellLerps = vec3((i & 1) == 1 ? 1.0 - lerps.x : lerps.x, (i & 2) != 0 ? 1.0 - lerps.y : lerps.y, (i & 4) != 0 ? 1.0 - lerps.z : lerps.z);
-    cellLerps = 1.0 - cellLerps;
-
-    weights *= lerpWeights[i];
-    vec3 voxelLighting = vec3(
-      dot(lightingBuffer[3 * flatIndices[i] + 0].rgb, weights),
-      dot(lightingBuffer[3 * flatIndices[i] + 1].rgb, weights),
-      dot(lightingBuffer[3 * flatIndices[i] + 2].rgb, weights)
-    );
+    vec3 voxelLighting = vec3(0);
+    float voxelWeight = 0;
+    for (int j = 0; j < MAX_VIRTUAL_PATCHES; ++j) {
+      vec4 row = lightingWeightsBuffer[MAX_VIRTUAL_PATCHES * flatIndices[i] + j];
+      float weight = max(dot(row.xyz, normal), 0.0) * row.w * lerpWeights[i];
+      voxelWeight += weight;
+      voxelLighting += lightingBuffer[MAX_VIRTUAL_PATCHES * flatIndices[i] + j].rgb * weight;
+    }
     lighting += voxelLighting;
-    float voxelWeight = dot(weights, vec3(1, 1, 1));
     weightSum += voxelWeight;
   }
   lighting /= max(weightSum, 1.0);
