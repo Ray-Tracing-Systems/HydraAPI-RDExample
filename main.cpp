@@ -183,10 +183,10 @@ int main(int argc, const char** argv)
   //const std::wstring scene = L"test_42"; // 0.5
   //const std::wstring scene = L"04_CornellBoxWithSeveralComplexShape"; // 0.5
   DataConfig::get().init(argc, argv, scene, scaledVoxelSize);
-  window_main_voxel_tessellator(L"../Diser/DiffuseReference/", scene, voxelSize);
+  window_main_voxel_tessellator(L"../Diser/DiffuseReference/", DataConfig::getSceneName(), voxelSize);
   //window_main_ff_integrator(L"Tessellated", scene);
-  window_main_ff_integrator(L"Tessellated", scene);
-  window_main_free_look_vulkan(L"Tessellated", scene);
+  window_main_ff_integrator(L"Tessellated", DataConfig::getSceneName());
+  window_main_free_look_vulkan(L"Tessellated", DataConfig::getSceneName());
   //window_main_free_look_vulkan(L"GI_res", scene);
   //window_main_free_look_vulkan(L"Tessellated", L"vulkan");
   //window_main_free_look_vulkan(L"../Diser/DiffuseReference/test_42/scenelib", L"vulkan");

@@ -16,11 +16,25 @@ public:
   void init(int argc, const char **argv, const std::wstring& scene_name, uint32_t voxel_size) {
     sceneName = scene_name;
     voxelSize = voxel_size;
+
+    if (argc > 1)
+    {
+      for (int i = 1; i < argc; ++i) {
+        if (argv[i] == std::string("-e")) {
+          useExposure = true;
+        } else if (argv[i] == std::string("-scene")) {
+          std::wstringstream ss;
+          ss << argv[i + 1];
+          sceneName = ss.str();
+        }
+      }
+    }
+
     const std::wstring scenesFolder = L"ScenesData/";
     if (!std::filesystem::exists(scenesFolder)) {
       std::filesystem::create_directory(scenesFolder);
     }
-    const std::wstring sceneFolder = scenesFolder + scene_name;
+    const std::wstring sceneFolder = scenesFolder + sceneName;
     if (!std::filesystem::exists(sceneFolder)) {
       std::filesystem::create_directory(sceneFolder);
     }
@@ -30,14 +44,6 @@ public:
       folder = ss.str();
       if (!std::filesystem::exists(folder)) {
         std::filesystem::create_directory(folder);
-      }
-    }
-    if (argc > 1)
-    {
-      for (int i = 1; i < argc; ++i) {
-        if (argv[i] == std::string("-e")) {
-          useExposure = true;
-        }
       }
     }
   }
@@ -55,6 +61,10 @@ public:
     std::wstringstream ss;
     ss << get().sceneName << "_" << get().voxelSize;
     return ss.str();
+  }
+
+  static std::wstring getSceneName() {
+    return get().sceneName;
   }
 
   bool hasExposure() const { return useExposure; };
