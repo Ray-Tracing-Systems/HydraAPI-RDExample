@@ -580,7 +580,7 @@ public:
       positions[i] += center;
     }
     // Fill packets to trace
-    const float BIAS = 1e-6f;
+    const float BIAS = 1e-5f;
     std::array<RTCRayHit16, WORDS_FOR_SAMPLES> rays;
     for (uint32_t packetId = 0, rayId = 0; packetId < rays.size(); ++packetId) {
       for (uint32_t localId = 0; localId < RT_PACKET_SIZE && rayId < directions.size(); ++localId, ++rayId) {
@@ -872,7 +872,7 @@ void RD_FFIntegrator::ComputeFF_voxelized(
       sample.square /= primCounter[sample.primId];
     }
     maxSamplesCount = max(maxSamplesCount, static_cast<uint32_t>(samples[i].size()));
-    //if (i == 37)
+    //if (i == 253)
     //{
     //  std::ofstream fout(DataConfig::get().getBinFilePath(L"debugPoints.bin"), std::ios::binary);
     //  uint32_t samplesCount = static_cast<uint32_t>(samples[i].size());
