@@ -772,6 +772,96 @@ void RD_FFIntegrator::ComputeFF(uint32_t quadsCount, std::vector<RD_FFIntegrator
   fout.close();
 }
 
+using FFMatrix = std::vector<std::vector<std::pair<uint32_t, float>>>;
+
+static void merge_two_patches(std::vector<FFSample>& samples, uint32_t dest, uint32_t src, std::vector<FFMatrix> &voxelRow, std::vector<std::vector<FFMatrix>> &virtualPatchesToPointsFF) {
+  const float weight1 = samples[dest].square / (samples[dest].square + samples[src].square);
+  const float weight2 = 1.0f - weight1;
+  samples[dest].color = samples[dest].color * weight1 + samples[src].color * weight2;
+  samples[dest].emission = samples[dest].emission * weight1 + samples[src].emission * weight2;
+  samples[dest].normal = normalize(samples[dest].normal * weight1 + samples[src].normal * weight2);
+  samples[dest].square += samples[src].square;
+  for (int idx = 0; idx < voxelRow.size(); ++idx) {
+    std::vector<std::pair<uint32_t, float>> newFFRow;
+    const FFMatrix& pointsSubFF = voxelRow[idx];
+    newFFRow.reserve(pointsSubFF[dest].size() + pointsSubFF[src].size());
+    uint32_t iter1 = 0, iter2 = 0;
+    while (iter1 < pointsSubFF[dest].size() && iter2 < pointsSubFF[src].size()) {
+      if (pointsSubFF[dest][iter1].first < pointsSubFF[src][iter2].first) {
+        newFFRow.emplace_back(pointsSubFF[dest][iter1]);
+        iter1++;
+      }
+      else if (pointsSubFF[dest][iter1].first > pointsSubFF[src][iter2].first) {
+        newFFRow.emplace_back(pointsSubFF[src][iter2]);
+        iter2++;
+      }
+      else {
+        newFFRow.emplace_back(
+          pointsSubFF[dest][iter1].first,
+          pointsSubFF[dest][iter1].second * weight1 + pointsSubFF[src][iter2].second * weight2
+        );
+        iter1++;
+        iter2++;
+      }
+    }
+    while (iter1 < pointsSubFF[dest].size()) {
+      newFFRow.emplace_back(pointsSubFF[dest][iter1]);
+      iter1++;
+    }
+    while (iter2 < pointsSubFF[src].size()) {
+      newFFRow.emplace_back(pointsSubFF[src][iter2]);
+      iter2++;
+    }
+    voxelRow[idx][dest] = std::move(newFFRow);
+    voxelRow[idx].erase(voxelRow[idx].begin() + src);
+  }
+  samples.erase(samples.begin() + src);
+  for (uint32_t j = 0; j < voxelRow[0].size(); ++j) {
+    std::vector<std::pair<uint32_t, float>>& row = voxelRow[0][j];
+    auto dest_iter = std::find_if(row.begin(), row.end(), [dest](const std::pair<uint32_t, float>& elem) {return dest == elem.first; });
+    auto src_iter = std::find_if(row.begin(), row.end(), [src](const std::pair<uint32_t, float>& elem) {return src == elem.first; });
+    if (dest_iter != row.end()) {
+      if (src_iter != row.end()) {
+        dest_iter->second += src_iter->second;
+        row.erase(src_iter);
+      }
+    }
+    else {
+      if (src_iter != row.end()) {
+        const float value = src_iter->second;
+        row.erase(src_iter);
+        auto targetToAdd = std::find_if(row.begin(), row.end(), [dest](const std::pair<uint32_t, float>& elem) {return dest < elem.first; });
+        row.insert(targetToAdd, std::make_pair(dest, value));
+      }
+    }
+    auto indicesToReduceBegin = std::find_if(row.begin(), row.end(), [src](const std::pair<uint32_t, float>& elem) {return src < elem.first; });
+    std::transform(indicesToReduceBegin, row.end(), indicesToReduceBegin, [](std::pair<uint32_t, float>& elem) { elem.first--; return elem; });
+  }
+  for (uint32_t i = 0; i < virtualPatchesToPointsFF.size(); ++i) {
+    for (uint32_t j = 0; j < virtualPatchesToPointsFF[i][0].size(); ++j) {
+      std::vector<std::pair<uint32_t, float>>& row = virtualPatchesToPointsFF[i][0][j];
+      auto dest_iter = std::find_if(row.begin(), row.end(), [dest](const std::pair<uint32_t, float>& elem) {return dest == elem.first; });
+      auto src_iter = std::find_if(row.begin(), row.end(), [src](const std::pair<uint32_t, float>& elem) {return src == elem.first; });
+      if (dest_iter != row.end()) {
+        if (src_iter != row.end()) {
+          dest_iter->second += src_iter->second;
+          row.erase(src_iter);
+        }
+      }
+      else {
+        if (src_iter != row.end()) {
+          const float value = src_iter->second;
+          row.erase(src_iter);
+          auto targetToAdd = std::find_if(row.begin(), row.end(), [dest](const std::pair<uint32_t, float>& elem) {return dest < elem.first; });
+          row.insert(targetToAdd, std::make_pair(dest, value));
+        }
+      }
+      auto indicesToReduceBegin = std::find_if(row.begin(), row.end(), [src](const std::pair<uint32_t, float>& elem) {return src < elem.first; });
+      std::transform(indicesToReduceBegin, row.end(), indicesToReduceBegin, [](std::pair<uint32_t, float> elem) { elem.first--; return elem; });
+    }
+  }
+}
+
 void RD_FFIntegrator::ComputeFF_voxelized(
   std::vector<RD_FFIntegrator::Triangle>& triangles,
   const std::vector<float>& squares,
@@ -908,7 +998,6 @@ void RD_FFIntegrator::ComputeFF_voxelized(
   //}
 
   // Compute form factors for voxels
-  using FFMatrix = std::vector<std::vector<std::pair<uint32_t, float>>>;
   FF.clear();
 
   std::vector<std::vector<std::pair<uint32_t, float>>> virtualPatchesFF;
@@ -995,6 +1084,15 @@ void RD_FFIntegrator::ComputeFF_voxelized(
       }
     }
 
+    for (uint32_t i = static_cast<uint32_t>(samples1.size()) - 1; i > 0; --i) {
+      for (uint32_t j = 0; j < i; ++j) {
+        if (dot(samples1[i].normal, samples1[j].normal) > 1.0f - 1e-5f) {
+          merge_two_patches(samples1, j, i, voxelRow, virtualPatchesToPointsFF);
+          break;
+        }
+      }
+    }
+
     // Merge samples by form-factors
     std::vector<std::vector<float>> similarityMatrix(samples1.size());
     for (uint32_t i = 0; i < similarityMatrix.size(); ++i) {
@@ -1050,87 +1148,7 @@ void RD_FFIntegrator::ComputeFF_voxelized(
         }
       }
 
-      const float weight1 = samples1[bestMatched.first].square / (samples1[bestMatched.first].square + samples1[bestMatched.second].square);
-      const float weight2 = 1.0f - weight1;
-      samples1[bestMatched.first].color = samples1[bestMatched.first].color * weight1 + samples1[bestMatched.second].color * weight2;
-      samples1[bestMatched.first].emission = samples1[bestMatched.first].emission * weight1 + samples1[bestMatched.second].emission * weight2;
-      samples1[bestMatched.first].normal = normalize(samples1[bestMatched.first].normal * weight1 + samples1[bestMatched.second].normal * weight2);
-      samples1[bestMatched.first].square += samples1[bestMatched.second].square;
-      for (int idx = 0; idx < voxelRow.size(); ++idx) {
-        std::vector<std::pair<uint32_t, float>> newFFRow;
-        const FFMatrix& pointsSubFF = voxelRow[idx];
-        newFFRow.reserve(pointsSubFF[bestMatched.first].size() + pointsSubFF[bestMatched.second].size());
-        uint32_t iter1 = 0, iter2 = 0;
-        while (iter1 < pointsSubFF[bestMatched.first].size() && iter2 < pointsSubFF[bestMatched.second].size()) {
-          if (pointsSubFF[bestMatched.first][iter1].first < pointsSubFF[bestMatched.second][iter2].first) {
-            newFFRow.emplace_back(pointsSubFF[bestMatched.first][iter1]);
-            iter1++;
-          } else if (pointsSubFF[bestMatched.first][iter1].first > pointsSubFF[bestMatched.second][iter2].first) {
-            newFFRow.emplace_back(pointsSubFF[bestMatched.second][iter2]);
-            iter2++;
-          } else {
-            newFFRow.emplace_back(
-              pointsSubFF[bestMatched.first][iter1].first,
-              pointsSubFF[bestMatched.first][iter1].second * weight1 + pointsSubFF[bestMatched.second][iter2].second * weight2
-            );
-            iter1++;
-            iter2++;
-          }
-        }
-        while (iter1 < pointsSubFF[bestMatched.first].size()) {
-          newFFRow.emplace_back(pointsSubFF[bestMatched.first][iter1]);
-          iter1++;
-        }
-        while (iter2 < pointsSubFF[bestMatched.second].size()) {
-          newFFRow.emplace_back(pointsSubFF[bestMatched.second][iter2]);
-          iter2++;
-        }
-        voxelRow[idx][bestMatched.first] = std::move(newFFRow);
-        voxelRow[idx].erase(voxelRow[idx].begin() + bestMatched.second);
-      }
-      samples1.erase(samples1.begin() + bestMatched.second);
-      for (uint32_t j = 0; j < voxelRow[0].size(); ++j) {
-        std::vector<std::pair<uint32_t, float>>& row = voxelRow[0][j];
-        auto dest = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.first == elem.first; });
-        auto src = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.second == elem.first; });
-        if (dest != row.end()) {
-          if (src != row.end()) {
-            dest->second += src->second;
-            row.erase(src);
-          }
-        } else {
-          if (src != row.end()) {
-            const float value = src->second;
-            row.erase(src);
-            auto targetToAdd = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.first < elem.first; });
-            row.insert(targetToAdd, std::make_pair(bestMatched.first, value));
-          }
-        }
-        auto indicesToReduceBegin = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.second < elem.first; });
-        std::transform(indicesToReduceBegin, row.end(), indicesToReduceBegin, [](std::pair<uint32_t, float>& elem) { elem.first--; return elem; });
-      }
-      for (uint32_t i = 0; i < virtualPatchesToPointsFF.size(); ++i) {
-        for (uint32_t j = 0; j < virtualPatchesToPointsFF[i][0].size(); ++j) {
-          std::vector<std::pair<uint32_t, float>>& row = virtualPatchesToPointsFF[i][0][j];
-          auto dest = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.first == elem.first; });
-          auto src = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.second == elem.first; });
-          if (dest != row.end()) {
-            if (src != row.end()) {
-              dest->second += src->second;
-              row.erase(src);
-            }
-          } else {
-            if (src != row.end()) {
-              const float value = src->second;
-              row.erase(src);
-              auto targetToAdd = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.first < elem.first; });
-              row.insert(targetToAdd, std::make_pair(bestMatched.first, value));
-            }
-          }
-          auto indicesToReduceBegin = std::find_if(row.begin(), row.end(), [&bestMatched](const std::pair<uint32_t, float>& elem) {return bestMatched.second < elem.first; });
-          std::transform(indicesToReduceBegin, row.end(), indicesToReduceBegin, [](std::pair<uint32_t, float> elem) { elem.first--; return elem; });
-        }
-      }
+      merge_two_patches(samples1, bestMatched.first, bestMatched.second, voxelRow, virtualPatchesToPointsFF);
 
       similarityMatrix.erase(similarityMatrix.begin() + bestMatched.second);
       for (uint32_t i = 0; i < similarityMatrix.size(); ++i) {
