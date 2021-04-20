@@ -348,7 +348,7 @@ using InitFuncType = void (*)();
 
 void window_main_free_look_vulkan(const std::wstring& a_libPath, const std::wstring& scene_name, InitFuncType a_pInitFunc, DrawFuncType a_pDrawFunc)
 {
-  g_input.inputLibraryPath = a_libPath;
+  g_input.inputLibraryPath = a_libPath + scene_name + L"/scenelib";
   g_input.inputRenderName = L"vulkan";
   sceneName = scene_name;
 
