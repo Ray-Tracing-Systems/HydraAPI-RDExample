@@ -2242,6 +2242,9 @@ bool RD_Vulkan::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode)
   materials[a_matId].emission = float4(0, 0, 0, 0);
   pugi::xml_node clrNode = a_materialNode.child(L"diffuse").child(L"color");
   pugi::xml_node texNode = a_materialNode.child(L"diffuse").child(L"texture");
+  if (texNode == nullptr) {
+    texNode = a_materialNode.child(L"diffuse").child(L"color").child(L"texture");
+  }
   pugi::xml_node mtxNode = a_materialNode.child(L"diffuse").child(L"sampler").child(L"matrix");
 
   bool isEmission = clrNode == nullptr;
