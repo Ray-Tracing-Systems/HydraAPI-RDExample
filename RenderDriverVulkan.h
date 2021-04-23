@@ -11,6 +11,7 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 #include <string>
 #include <sstream>
@@ -231,13 +232,15 @@ protected:
   };
 
   struct PipelineConfig {
-    std::string vertexShaderPath, pixelShaderPath;
+    std::string vertexShaderPath;
+    std::optional<std::string> pixelShaderPath;
     bool hasVertexBuffer = false;
     VkRenderPass renderPass = {};
     VkDescriptorSetLayout descriptorSetLayout = {};
     uint32_t rtCount = 1;
     std::vector<VkPushConstantRange> pushConstants;
     VkPrimitiveTopology primitiveTopology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    uint32_t width, height;
   };
 
   struct DirectLightTemplate {
@@ -263,6 +266,7 @@ protected:
   void createPipelines();
   VkPipeline createGraphicsPipeline(const PipelineConfig&, VkPipelineLayout& layout);
   void createGbufferRenderPass();
+  void createShadowMapRenderPass();
   void createResolveRenderPass();
   void createPostprocessRenderPass();
   void createFramebuffers();
@@ -329,20 +333,25 @@ protected:
   std::vector<VkImageView> swapChainImageViews;
   std::vector<VkFramebuffer> swapChainFramebuffers;
   VkFramebuffer gbufferFramebuffer;
+  VkFramebuffer shadowMapFramebuffer;
   VkFramebuffer resolveFramebuffer;
   VkFormat swapChainImageFormat;
   VkExtent2D swapChainExtent;
+  VkDescriptorSetLayout shadowMapDescriptorSetLayout;
   VkDescriptorSetLayout gbufferDescriptorSetLayout;
   VkDescriptorSetLayout resolveDescriptorSetLayout;
   VkDescriptorSetLayout postprocessDescriptorSetLayout;
   VkDescriptorSetLayout debugPointsDescriptorSetLayout;
+  VkPipelineLayout shadowMapPipelineLayout;
   VkPipelineLayout gbufferPipelineLayout;
   VkPipelineLayout debugPointsPipelineLayout;
   VkPipelineLayout resolvePipelineLayout;
   VkPipelineLayout postprocessPipelineLayout;
   VkRenderPass gbufferRenderPass;
+  VkRenderPass shadowMapRenderPass;
   VkRenderPass resolveRenderPass;
   VkRenderPass postprocessRenderPass;
+  VkPipeline shadowMapPipeline;
   VkPipeline graphicsPipeline;
   VkPipeline resolvePipeline;
   VkPipeline debugPointsPipeline;
@@ -374,9 +383,16 @@ protected:
   VkImageView frameMipchainImageView;
   VkSampler frameMipchainImageSampler;
 
+  VkImage shadowMapImage;
+  VkDeviceMemory shadowMapImageMemory;
+  VkImageView shadowMapImageView;
+  VkSampler shadowMapImageSampler;
+  const uint32_t SHADOW_MAP_RESOLUTION = 4096;
+
   VkDescriptorPool resolveDescriptorPool = {};
   VkDescriptorPool postprocessDescriptorPool = {};
   VkDescriptorPool gbufferDescriptorPool = {};
+  VkDescriptorPool shadowMapDescriptorPool = {};
   VkDescriptorSet resolveDescriptorSets;
   std::vector<VkDescriptorSet> postprocessDescriptorSets;
 
@@ -390,6 +406,7 @@ protected:
   std::unordered_map<int, StaticModel> modelsLib;
   std::vector<StaticModelInstances> modelInstances;
   std::vector<VkDescriptorSet> materialsLib;
+  VkDescriptorSet materialsShadowDs;
   VkBuffer resolveConstants;
   VkDeviceMemory resolveConstantsMemory;
 
@@ -424,6 +441,9 @@ protected:
   HydraLiteMath::float4 bmin;
   HydraLiteMath::float4 bmax;
   HydraLiteMath::float4 averageLighting;
+
+  HydraLiteMath::float4x4 lighttm;
+  bool hasDirectLight = false;
 
   uint32_t screenMipLevels = 0;
   ScreenshotState screenshotState = ScreenshotState::OFF;

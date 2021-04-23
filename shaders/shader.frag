@@ -11,7 +11,7 @@ layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outNormal;
 
 void main() {
-  outColor = texture(texSampler, fragTexCoord) * vec4(fragColor, 1);
+  outColor = pow(texture(texSampler, fragTexCoord), vec4(2.2)) * vec4(fragColor, 1);
   if (outColor.w == 0)
     discard;
   outNormal = vec4(normalize(fragNormal_emissionMult.xyz), fragNormal_emissionMult.w);
