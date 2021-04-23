@@ -420,6 +420,7 @@ protected:
   VkDeviceMemory matricesBufferMemory = {};
   HydraLiteMath::float4x4 globtm;
   HydraLiteMath::float4x4 lighttm;
+  bool hasDirectLight = false;
   uint32_t screenMipLevels = 0;
   ScreenshotState screenshotState = ScreenshotState::OFF;
   VkBuffer screenshotBuffer = {};

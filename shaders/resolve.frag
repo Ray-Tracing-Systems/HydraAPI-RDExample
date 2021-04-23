@@ -37,6 +37,9 @@ float saturate(float a) {
 }
 
 vec3 ComputeLighting(vec3 worldPos, vec3 normal, DirectLight light) {
+  if (length(light.direction) < 1e-5) {
+    return vec3(0);
+  }
   vec3 pointToLight = light.position - worldPos;
   vec3 pointToLightDir = normalize(pointToLight);
   float lightDot = dot(-pointToLightDir, normalize(light.direction));

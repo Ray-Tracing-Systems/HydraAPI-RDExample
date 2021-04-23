@@ -1405,33 +1405,36 @@ void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
   beginInfo.pInheritanceInfo = nullptr;
   VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffers[current_image], &beginInfo));
 
-  VkRenderPassBeginInfo shadowMapRenderPassBeginInfo = {};
-  shadowMapRenderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-  shadowMapRenderPassBeginInfo.renderPass = shadowMapRenderPass;
-  shadowMapRenderPassBeginInfo.framebuffer = shadowMapFramebuffer;
-  shadowMapRenderPassBeginInfo.renderArea.offset = { 0, 0 };
-  shadowMapRenderPassBeginInfo.renderArea.extent = VkExtent2D{ SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION };
-  VkClearValue shadowMapClearValues = {};
-  shadowMapClearValues.depthStencil = { 1.0f, 0 };
-  shadowMapRenderPassBeginInfo.clearValueCount = 1;
-  shadowMapRenderPassBeginInfo.pClearValues = &shadowMapClearValues;
-  vkCmdBeginRenderPass(commandBuffers[current_image], &shadowMapRenderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-  vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, shadowMapPipeline);
-
   VkDeviceSize zeroOffset = 0;
-  vkCmdBindVertexBuffers(commandBuffers[current_image], 0, 1, &globalVertexBuffer, &zeroOffset);
-  vkCmdBindIndexBuffer(commandBuffers[current_image], globalIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
-  vkCmdPushConstants(commandBuffers[current_image], shadowMapPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4), &lighttm);
-  for (auto& modelInstance : modelInstances) {
-    for (auto& subMeshes : modelInstance.parts) {
-      vkCmdPushConstants(commandBuffers[current_image], shadowMapPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(float4x4), sizeof(float4), &materials[subMeshes.mesh.materialId].color);
-      vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, shadowMapPipelineLayout, 0, 1, &materialsShadowDs, 0, nullptr);
-      vkCmdDrawIndexed(commandBuffers[current_image], subMeshes.mesh.incidesCount, subMeshes.matricesCount, subMeshes.mesh.indicesOffset, 0, subMeshes.matricesOffset);
-    }
-  }
+  if (hasDirectLight)
+  {
+    VkRenderPassBeginInfo shadowMapRenderPassBeginInfo = {};
+    shadowMapRenderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    shadowMapRenderPassBeginInfo.renderPass = shadowMapRenderPass;
+    shadowMapRenderPassBeginInfo.framebuffer = shadowMapFramebuffer;
+    shadowMapRenderPassBeginInfo.renderArea.offset = { 0, 0 };
+    shadowMapRenderPassBeginInfo.renderArea.extent = VkExtent2D{ SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION };
+    VkClearValue shadowMapClearValues = {};
+    shadowMapClearValues.depthStencil = { 1.0f, 0 };
+    shadowMapRenderPassBeginInfo.clearValueCount = 1;
+    shadowMapRenderPassBeginInfo.pClearValues = &shadowMapClearValues;
+    vkCmdBeginRenderPass(commandBuffers[current_image], &shadowMapRenderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-  vkCmdEndRenderPass(commandBuffers[current_image]);
+    vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, shadowMapPipeline);
+
+    vkCmdBindVertexBuffers(commandBuffers[current_image], 0, 1, &globalVertexBuffer, &zeroOffset);
+    vkCmdBindIndexBuffer(commandBuffers[current_image], globalIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+    vkCmdPushConstants(commandBuffers[current_image], shadowMapPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4), &lighttm);
+    for (auto& modelInstance : modelInstances) {
+      for (auto& subMeshes : modelInstance.parts) {
+        vkCmdPushConstants(commandBuffers[current_image], shadowMapPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(float4x4), sizeof(float4), &materials[subMeshes.mesh.materialId].color);
+        vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, shadowMapPipelineLayout, 0, 1, &materialsShadowDs, 0, nullptr);
+        vkCmdDrawIndexed(commandBuffers[current_image], subMeshes.mesh.incidesCount, subMeshes.matricesCount, subMeshes.mesh.indicesOffset, 0, subMeshes.matricesOffset);
+      }
+    }
+
+    vkCmdEndRenderPass(commandBuffers[current_image]);
+  }
 
   VkRenderPassBeginInfo gbufferRenderPassBeginInfo = {};
   gbufferRenderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -2448,9 +2451,12 @@ void RD_Vulkan::EndScene()
   }
   inited = true;
   void* data;
-  vkMapMemory(device, lightsBufferMemory, 0, directLights.size() * sizeof(directLights[0]), 0, &data);
-  memcpy(data, directLights.data(), directLights.size() * sizeof(directLights[0]));
-  vkUnmapMemory(device, lightsBufferMemory);
+  if (hasDirectLight)
+  {
+    vkMapMemory(device, lightsBufferMemory, 0, directLights.size() * sizeof(directLights[0]), 0, &data);
+    memcpy(data, directLights.data(), directLights.size() * sizeof(directLights[0]));
+    vkUnmapMemory(device, lightsBufferMemory);
+  }
 
   createVertexBuffer();
   createIndexBuffer();
@@ -2671,6 +2677,7 @@ void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
   memcpy(data, viewVecsData.data(), sizeof(viewVecsData));
   vkUnmapMemory(device, resolveConstantsMemory);
 
+  if (hasDirectLight)
   {
     float4x4 pr = orthographic_projection_matrix(-directLights[0].outerRadius, directLights[0].outerRadius, -directLights[0].outerRadius, directLights[0].outerRadius, 0.1, 200.0);
     float4x4 view = lookAtTransposed(directLights[0].position, directLights[0].direction + directLights[0].position, float3(0, 1, 0));
@@ -2743,6 +2750,7 @@ void RD_Vulkan::InstanceLights(int32_t a_light_id, const float* a_matrix, pugi::
       lightToAdd.direction = -to_float3(matrix.row[1]);
       lightToAdd.position = to_float3(matrix.row[3]);
       directLights.push_back(lightToAdd);
+      hasDirectLight = true;
     }
   }
 }
