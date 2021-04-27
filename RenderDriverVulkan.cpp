@@ -621,6 +621,39 @@ VkPipeline RD_Vulkan::createGraphicsPipeline(const PipelineConfig& config, VkPip
   return pipeline;
 }
 
+VkPipeline RD_Vulkan::createComputePipeline(const ComputePipelineConfig& config, VkPipelineLayout& layout) {
+  auto shaderCode = readFile(config.shaderPath);
+  VkShaderModule shaderModule = createShaderModule(device, shaderCode);
+  VkPipelineShaderStageCreateInfo pipelineShaderStageCreateInfo = {};
+  pipelineShaderStageCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  pipelineShaderStageCreateInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+  pipelineShaderStageCreateInfo.module = shaderModule;
+  pipelineShaderStageCreateInfo.pName = "main";
+
+  VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {};
+  pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  pipelineLayoutCreateInfo.setLayoutCount = 1;
+  pipelineLayoutCreateInfo.pSetLayouts = &config.descriptorSetLayout;
+  pipelineLayoutCreateInfo.pushConstantRangeCount = static_cast<uint32_t>(config.pushConstants.size());
+  pipelineLayoutCreateInfo.pPushConstantRanges = config.pushConstants.data();
+
+  VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &layout));
+
+  VkComputePipelineCreateInfo pipelineCreateInfo = {};
+  pipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+  pipelineCreateInfo.flags = VK_PIPELINE_CREATE_DISPATCH_BASE;
+  pipelineCreateInfo.stage = pipelineShaderStageCreateInfo;
+  pipelineCreateInfo.layout = layout;
+  pipelineCreateInfo.basePipelineHandle = VK_NULL_HANDLE;
+  pipelineCreateInfo.basePipelineIndex = -1; // Optional
+
+  VkPipeline pipeline = {};
+  VK_CHECK_RESULT(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipeline));
+
+  vkDestroyShaderModule(device, shaderModule, nullptr);
+  return pipeline;
+}
+
 uint32_t findMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties) {
   VkPhysicalDeviceMemoryProperties memProperties;
   vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
@@ -1438,6 +1471,12 @@ void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
     }
 
     vkCmdEndRenderPass(commandBuffers[current_image]);
+
+    vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_COMPUTE, initialLightingPipeline);
+
+    vkCmdPushConstants(commandBuffers[current_image], initialLightingPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float4x4), &lighttm);
+    vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_COMPUTE, initialLightingPipelineLayout, 0, 1, &initialLightingDs, 0, nullptr);
+    vkCmdDispatch(commandBuffers[current_image], (gridSize.x + 3) / 4, (gridSize.x + 3) / 4, (gridSize.x + 3) / 4);
   }
 
   VkRenderPassBeginInfo gbufferRenderPassBeginInfo = {};
@@ -1669,6 +1708,7 @@ void RD_Vulkan::cleanupSwapChain() {
   vkDestroyDescriptorPool(device, gbufferDescriptorPool, nullptr);
   vkDestroyDescriptorPool(device, resolveDescriptorPool, nullptr);
   vkDestroyDescriptorPool(device, postprocessDescriptorPool, nullptr);
+  vkDestroyDescriptorPool(device, initialLightingDescriptorPool, nullptr);
 
   vkDestroyFramebuffer(device, shadowMapFramebuffer, nullptr);
   vkDestroyFramebuffer(device, gbufferFramebuffer, nullptr);
@@ -1746,6 +1786,12 @@ void RD_Vulkan::createPipelines() {
   debugPointsConfig.height = swapChainExtent.height;
   debugPointsConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4) });
   debugPointsPipeline = createGraphicsPipeline(debugPointsConfig, debugPointsPipelineLayout);
+
+  ComputePipelineConfig initialLightingConfig;
+  initialLightingConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float4x4) });
+  initialLightingConfig.shaderPath = "shaders/initialLighting.spv";
+  initialLightingConfig.descriptorSetLayout = initialLightingDescriptorSetLayout;
+  initialLightingPipeline = createComputePipeline(initialLightingConfig, initialLightingPipelineLayout);
 }
 
 void RD_Vulkan::recreateSwapChain() {
@@ -1765,7 +1811,10 @@ void RD_Vulkan::recreateSwapChain() {
   createFramebuffers();
 }
 
-static VkDescriptorSetLayout create_descriptors_set_layout(VkDevice device, const uint32_t uniform_buffers_count, const uint32_t storage_buffers_count, const uint32_t textures_count, const VkShaderStageFlagBits buffers_bits) {
+static VkDescriptorSetLayout create_descriptors_set_layout(
+  VkDevice device, const uint32_t uniform_buffers_count, const uint32_t storage_buffers_count, const uint32_t textures_count,
+  const VkShaderStageFlagBits buffers_bits, const VkShaderStageFlagBits images_bits
+) {
   std::vector<VkDescriptorSetLayoutBinding> bindings(uniform_buffers_count + storage_buffers_count + textures_count);
   for (uint32_t i = 0; i < uniform_buffers_count; ++i) {
     VkDescriptorSetLayoutBinding uboLayoutBinding = {};
@@ -1790,7 +1839,7 @@ static VkDescriptorSetLayout create_descriptors_set_layout(VkDevice device, cons
     bindings[i].binding = i;
     bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[i].descriptorCount = 1;
-    bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[i].stageFlags = images_bits;
     bindings[i].pImmutableSamplers = nullptr; // Optional
   }
 
@@ -1805,11 +1854,12 @@ static VkDescriptorSetLayout create_descriptors_set_layout(VkDevice device, cons
 }
 
 void RD_Vulkan::createDescriptorSetLayout() {
-  debugPointsDescriptorSetLayout = create_descriptors_set_layout(device, 2, 2, 3, VK_SHADER_STAGE_FRAGMENT_BIT);
-  shadowMapDescriptorSetLayout = create_descriptors_set_layout(device, 1, 0, 0, VK_SHADER_STAGE_VERTEX_BIT);
-  gbufferDescriptorSetLayout = create_descriptors_set_layout(device, 1, 0, 1, VK_SHADER_STAGE_VERTEX_BIT);
-  resolveDescriptorSetLayout = create_descriptors_set_layout(device, 2, 2, 4, VK_SHADER_STAGE_FRAGMENT_BIT);
-  postprocessDescriptorSetLayout = create_descriptors_set_layout(device, 0, 0, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
+  debugPointsDescriptorSetLayout = create_descriptors_set_layout(device, 2, 2, 3, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
+  shadowMapDescriptorSetLayout = create_descriptors_set_layout(device, 1, 0, 0, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
+  gbufferDescriptorSetLayout = create_descriptors_set_layout(device, 1, 0, 1, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
+  resolveDescriptorSetLayout = create_descriptors_set_layout(device, 2, 2, 4, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
+  postprocessDescriptorSetLayout = create_descriptors_set_layout(device, 0, 0, 1, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
+  initialLightingDescriptorSetLayout = create_descriptors_set_layout(device, 2, 2, 1, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT);
 }
 
 void RD_Vulkan::createDescriptorPool() {
@@ -2284,6 +2334,7 @@ RD_Vulkan::~RD_Vulkan()
   vkDestroyDescriptorSetLayout(device, gbufferDescriptorSetLayout, nullptr);
   vkDestroyDescriptorSetLayout(device, debugPointsDescriptorSetLayout, nullptr);
   vkDestroyDescriptorSetLayout(device, shadowMapDescriptorSetLayout, nullptr);
+  vkDestroyDescriptorSetLayout(device, initialLightingDescriptorSetLayout, nullptr);
 
   vkDestroyBuffer(device, globalVertexBuffer, nullptr);
   vkFreeMemory(device, globalVertexBufferMemory, nullptr);
@@ -2675,6 +2726,24 @@ void RD_Vulkan::EndScene()
     VK_CHECK_RESULT(vkCreateDescriptorPool(device, &poolInfo, nullptr, &shadowMapDescriptorPool));
   }
 
+  {
+    std::array<VkDescriptorPoolSize, 3> poolSizes = {};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[1].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[2].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = 1;
+
+    VK_CHECK_RESULT(vkCreateDescriptorPool(device, &poolInfo, nullptr, &initialLightingDescriptorPool));
+  }
+
   materialsLib.resize(materials.size());
   std::vector<VkDescriptorSetLayout> layouts(materialsLib.size(), gbufferDescriptorSetLayout);
   VkDescriptorSetAllocateInfo allocInfo = {};
@@ -2736,6 +2805,67 @@ void RD_Vulkan::EndScene()
     descriptorWrites.pBufferInfo = buffersInfo.data();
 
     vkUpdateDescriptorSets(device, 1, &descriptorWrites, 0, nullptr);
+  }
+
+  {
+    VkDescriptorSetAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = initialLightingDescriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &initialLightingDescriptorSetLayout;
+    VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &initialLightingDs));
+
+    std::array<VkDescriptorBufferInfo, 2> buffersInfo;
+    buffersInfo[0].buffer = lightsBuffer;
+    buffersInfo[0].offset = 0;
+    buffersInfo[0].range = sizeof(DirectLight);
+
+    buffersInfo[1].buffer = resolveConstants;
+    buffersInfo[1].offset = 0;
+    buffersInfo[1].range = sizeof(float4) * (4 + 4);
+
+    std::array<VkDescriptorBufferInfo, 2> lightBuffersInfo;
+    lightBuffersInfo[0].buffer = lightingBuffer;
+    lightBuffersInfo[0].offset = 0;
+    lightBuffersInfo[0].range = lightingBufferSize;
+
+    lightBuffersInfo[1].buffer = lightingWeightsBuffer;
+    lightBuffersInfo[1].offset = 0;
+    lightBuffersInfo[1].range = lightingWeightsBufferSize;
+
+    std::vector<VkWriteDescriptorSet> descriptorWrites(3);
+    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[0].dstSet = initialLightingDs;
+    descriptorWrites[0].dstBinding = 0;
+    descriptorWrites[0].dstArrayElement = 0;
+    descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    descriptorWrites[0].descriptorCount = static_cast<uint32_t>(buffersInfo.size());
+    descriptorWrites[0].pBufferInfo = buffersInfo.data();
+
+    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[1].dstSet = initialLightingDs;
+    descriptorWrites[1].dstBinding = 2;
+    descriptorWrites[1].dstArrayElement = 0;
+    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites[1].descriptorCount = static_cast<uint32_t>(lightBuffersInfo.size());
+    descriptorWrites[1].pBufferInfo = lightBuffersInfo.data();
+    descriptorWrites[1].pImageInfo = nullptr; // Optional
+    descriptorWrites[1].pTexelBufferView = nullptr; // Optional
+
+    VkDescriptorImageInfo shadowMapImageInfo = {};
+    shadowMapImageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+    shadowMapImageInfo.imageView = shadowMapImageView;
+    shadowMapImageInfo.sampler = shadowMapImageSampler;
+
+    descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[2].dstSet = initialLightingDs;
+    descriptorWrites[2].dstBinding = 4;
+    descriptorWrites[2].dstArrayElement = 0;
+    descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    descriptorWrites[2].descriptorCount = 1;
+    descriptorWrites[2].pImageInfo = &shadowMapImageInfo;
+
+    vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
   }
 
   createCommandBuffers();
@@ -2979,9 +3109,11 @@ void RD_Vulkan::destroyPipelines() {
   vkDestroyPipeline(device, resolvePipeline, nullptr);
   vkDestroyPipeline(device, postprocessPipeline, nullptr);
   vkDestroyPipeline(device, debugPointsPipeline, nullptr);
+  vkDestroyPipeline(device, initialLightingPipeline, nullptr);
   vkDestroyPipelineLayout(device, shadowMapPipelineLayout, nullptr);
   vkDestroyPipelineLayout(device, gbufferPipelineLayout, nullptr);
   vkDestroyPipelineLayout(device, resolvePipelineLayout, nullptr);
   vkDestroyPipelineLayout(device, postprocessPipelineLayout, nullptr);
   vkDestroyPipelineLayout(device, debugPointsPipelineLayout, nullptr);
+  vkDestroyPipelineLayout(device, initialLightingPipelineLayout, nullptr);
 }

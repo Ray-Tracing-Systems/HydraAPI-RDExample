@@ -243,6 +243,12 @@ protected:
     uint32_t width, height;
   };
 
+  struct ComputePipelineConfig {
+    std::string shaderPath;
+    std::vector<VkPushConstantRange> pushConstants;
+    VkDescriptorSetLayout descriptorSetLayout = {};
+  };
+
   struct DirectLightTemplate {
     HydraLiteMath::float3 color;
     float innerRadius; float outerRadius;
@@ -265,6 +271,7 @@ protected:
   void createImageViews();
   void createPipelines();
   VkPipeline createGraphicsPipeline(const PipelineConfig&, VkPipelineLayout& layout);
+  VkPipeline createComputePipeline(const ComputePipelineConfig& config, VkPipelineLayout& layout);
   void createGbufferRenderPass();
   void createShadowMapRenderPass();
   void createResolveRenderPass();
@@ -342,11 +349,13 @@ protected:
   VkDescriptorSetLayout resolveDescriptorSetLayout;
   VkDescriptorSetLayout postprocessDescriptorSetLayout;
   VkDescriptorSetLayout debugPointsDescriptorSetLayout;
+  VkDescriptorSetLayout initialLightingDescriptorSetLayout;
   VkPipelineLayout shadowMapPipelineLayout;
   VkPipelineLayout gbufferPipelineLayout;
   VkPipelineLayout debugPointsPipelineLayout;
   VkPipelineLayout resolvePipelineLayout;
   VkPipelineLayout postprocessPipelineLayout;
+  VkPipelineLayout initialLightingPipelineLayout;
   VkRenderPass gbufferRenderPass;
   VkRenderPass shadowMapRenderPass;
   VkRenderPass resolveRenderPass;
@@ -356,6 +365,7 @@ protected:
   VkPipeline resolvePipeline;
   VkPipeline debugPointsPipeline;
   VkPipeline postprocessPipeline;
+  VkPipeline initialLightingPipeline;
   VkCommandPool commandPool;
 
   VkImage depthImage;
@@ -393,6 +403,7 @@ protected:
   VkDescriptorPool postprocessDescriptorPool = {};
   VkDescriptorPool gbufferDescriptorPool = {};
   VkDescriptorPool shadowMapDescriptorPool = {};
+  VkDescriptorPool initialLightingDescriptorPool = {};
   VkDescriptorSet resolveDescriptorSets;
   std::vector<VkDescriptorSet> postprocessDescriptorSets;
 
@@ -407,6 +418,7 @@ protected:
   std::vector<StaticModelInstances> modelInstances;
   std::vector<VkDescriptorSet> materialsLib;
   VkDescriptorSet materialsShadowDs;
+  VkDescriptorSet initialLightingDs;
   VkBuffer resolveConstants;
   VkDeviceMemory resolveConstantsMemory;
 
