@@ -1264,6 +1264,7 @@ void RD_FFIntegrator::ComputeFF_voxelized(
 }
 
 std::vector<float3> RD_FFIntegrator::ComputeLightingClassic(const std::vector<float3>& emission, const std::vector<float3>& colors) {
+  Timer tm("Compute lighting");
   const int quadsCount = static_cast<int>(colors.size());
   std::vector<float3> incident;
   std::vector<float3> lighting(emission.size(), float3(0, 0, 0));
