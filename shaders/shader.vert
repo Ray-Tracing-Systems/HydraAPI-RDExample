@@ -23,5 +23,6 @@ void main() {
     gl_Position = globtm * (ubo.model[gl_InstanceIndex] * vec4(inPosition, 1.0));
     fragColor = color_emissionMult.rgb;
     fragTexCoord = inTexCoord;
-    fragNormal_emissionMult = vec4(inNormal, color_emissionMult.a);
+    fragNormal_emissionMult = ubo.model[gl_InstanceIndex] * vec4(inNormal, 0);
+    fragNormal_emissionMult.a = color_emissionMult.a;
 }
