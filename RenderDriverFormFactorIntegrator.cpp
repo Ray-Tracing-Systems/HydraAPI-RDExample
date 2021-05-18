@@ -875,14 +875,14 @@ void RD_FFIntegrator::ComputeFF_voxelized(
   const uint32_t voxelsCount = static_cast<uint32_t>(voxels_centers.size());
   std::wstring ffFilename = DataConfig::get().getBinFilePath(L"FF_vox.bin");
   std::ifstream fin(ffFilename, std::ios::binary);
-  if (fin.is_open() && false) {
+  if (fin.is_open()) {
     uint32_t countFromFile = 0;
     uint32_t ffVersion = 0;
     fin.read(reinterpret_cast<char*>(&ffVersion), sizeof(ffVersion));
     if (ffVersion == DataConfig::FF_VERSION) {
       fin.read(reinterpret_cast<char*>(&countFromFile), sizeof(countFromFile));
-      assert(countFromFile == voxelsCount);
-      for (uint32_t i = 0; i < voxelsCount; ++i) {
+      FF.resize(countFromFile);
+      for (uint32_t i = 0; i < countFromFile; ++i) {
         uint32_t rowSize;
         fin.read(reinterpret_cast<char*>(&rowSize), sizeof(rowSize));
         FF[i].resize(rowSize);
@@ -897,7 +897,22 @@ void RD_FFIntegrator::ComputeFF_voxelized(
           assert(value <= 1 && "Too big FF");
           rowSum += value;
         }
-        //assert(rowSum <= 1 && "Too big FF sum");
+      }
+      normals.resize(countFromFile);
+      colors.resize(countFromFile);
+      emission.resize(countFromFile);
+      virtualPatchVoxelId.resize(countFromFile);
+      for (uint32_t i = 0; i < countFromFile; ++i) {
+        fin.read(reinterpret_cast<char*>(&normals[i]), sizeof(normals[i]));
+      }
+      for (uint32_t i = 0; i < countFromFile; ++i) {
+        fin.read(reinterpret_cast<char*>(&colors[i]), sizeof(colors[i]));
+      }
+      for (uint32_t i = 0; i < countFromFile; ++i) {
+        fin.read(reinterpret_cast<char*>(&emission[i]), sizeof(emission[i]));
+      }
+      for (uint32_t i = 0; i < countFromFile; ++i) {
+        fin.read(reinterpret_cast<char*>(&virtualPatchVoxelId[i]), sizeof(virtualPatchVoxelId[i]));
       }
       fin.close();
       return;
@@ -1259,6 +1274,18 @@ void RD_FFIntegrator::ComputeFF_voxelized(
       fout.write(reinterpret_cast<char*>(&idx), sizeof(idx));
       fout.write(reinterpret_cast<char*>(&value), sizeof(value));
     }
+  }
+  for (uint32_t i = 0; i < outSize; ++i) {
+    fout.write(reinterpret_cast<char*>(&normals[i]), sizeof(normals[i]));
+  }
+  for (uint32_t i = 0; i < outSize; ++i) {
+    fout.write(reinterpret_cast<char*>(&colors[i]), sizeof(colors[i]));
+  }
+  for (uint32_t i = 0; i < outSize; ++i) {
+    fout.write(reinterpret_cast<char*>(&emission[i]), sizeof(emission[i]));
+  }
+  for (uint32_t i = 0; i < outSize; ++i) {
+    fout.write(reinterpret_cast<char*>(&virtualPatchVoxelId[i]), sizeof(virtualPatchVoxelId[i]));
   }
   fout.close();
 }
