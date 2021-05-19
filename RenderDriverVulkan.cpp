@@ -2160,6 +2160,26 @@ VkFormat RD_Vulkan::findDepthFormat() {
   );
 }
 
+template<typename T>
+void create_data_buffer(RD_Vulkan::BufferManager &bufManager, VkDevice device, const std::vector<T>& data, VkBuffer& buffer, VkDeviceMemory& memory) {
+  VkDeviceSize bufferSize = data.size() * sizeof(T);
+
+  VkBuffer stagingBuffer;
+  VkDeviceMemory stagingBufferMemory;
+  bufManager.createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+  void* dstPtr;
+  vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &dstPtr);
+  memcpy(dstPtr, data.data(), (size_t)bufferSize);
+  vkUnmapMemory(device, stagingBufferMemory);
+
+  bufManager.createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, buffer, memory);
+
+  bufManager.copyBuffer(stagingBuffer, buffer, bufferSize);
+  vkDestroyBuffer(device, stagingBuffer, nullptr);
+  vkFreeMemory(device, stagingBufferMemory, nullptr);
+}
+
 void RD_Vulkan::createLightingBuffer() {
   uint3 voxelGridSize;
   std::ifstream VoxelGridLightingIn(DataConfig::get().getBinFilePath(L"VoxelGridLighting.bin"), std::ios::binary | std::ios::in);
@@ -2198,45 +2218,11 @@ void RD_Vulkan::createLightingBuffer() {
   VoxelGridLightingIn.read(reinterpret_cast<char*>(&averageLighting), sizeof(float3));
   VoxelGridLightingIn.close();
 
+  create_data_buffer(BufferManager::get(), device, voxelsGridColors, lightingBuffer, lightingMemory);
+  create_data_buffer(BufferManager::get(), device, voxelsGridWeightMats, lightingWeightsBuffer, lightingWeightsMemory);
+
   lightingBufferSize = static_cast<uint32_t>(sizeof(voxelsGridColors[0]) * voxelsGridColors.size());
   lightingWeightsBufferSize = static_cast<uint32_t>(sizeof(voxelsGridWeightMats[0]) * voxelsGridWeightMats.size());
-  {
-    VkDeviceSize bufferSize = lightingBufferSize;
-
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
-    BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-    void* data;
-    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-    memcpy(data, voxelsGridColors.data(), (size_t)bufferSize);
-    vkUnmapMemory(device, stagingBufferMemory);
-
-    BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, lightingBuffer, lightingMemory);
-
-    BufferManager::get().copyBuffer(stagingBuffer, lightingBuffer, bufferSize);
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingBufferMemory, nullptr);
-  }
-
-  {
-    VkDeviceSize bufferSize = lightingWeightsBufferSize;
-
-    VkBuffer stagingBuffer;
-    VkDeviceMemory stagingBufferMemory;
-    BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-    void* data;
-    vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-    memcpy(data, voxelsGridWeightMats.data(), (size_t)bufferSize);
-    vkUnmapMemory(device, stagingBufferMemory);
-
-    BufferManager::get().createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, lightingWeightsBuffer, lightingWeightsMemory);
-
-    BufferManager::get().copyBuffer(stagingBuffer, lightingWeightsBuffer, bufferSize);
-    vkDestroyBuffer(device, stagingBuffer, nullptr);
-    vkFreeMemory(device, stagingBufferMemory, nullptr);
-  }
 }
 
 void RD_Vulkan::prepareDebugPoints() {
