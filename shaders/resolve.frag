@@ -54,7 +54,7 @@ vec3 ComputeLighting(vec3 worldPos, vec3 normal, DirectLight light) {
   for (float x = -1.5; x <= 1.5; x += 1.0) {
     for (float y = -1.5; y <= 1.5; y += 1.0) {
       float shadowDepth = texture(shadowMap, lightUv + vec2(x, y) / shadowSize).x;
-      shadow += shadowDepth < lightPos.z - 1e-3 ? 0.0 : 1.0 / 16.0;
+      shadow += shadowDepth < lightPos.z ? 0.0 : 1.0 / 16.0;
     }
   }
 

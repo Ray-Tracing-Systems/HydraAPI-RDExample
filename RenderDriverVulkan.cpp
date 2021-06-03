@@ -519,7 +519,7 @@ VkPipeline RD_Vulkan::createGraphicsPipeline(const PipelineConfig& config, VkPip
   rasterizationState.depthClampEnable = VK_FALSE;
   rasterizationState.lineWidth = 1;
   rasterizationState.rasterizerDiscardEnable = VK_FALSE;
-  rasterizationState.cullMode = VK_CULL_MODE_NONE;
+  rasterizationState.cullMode = config.cullingBits;
   rasterizationState.frontFace = VK_FRONT_FACE_CLOCKWISE;
   rasterizationState.depthBiasEnable = VK_FALSE;
   rasterizationState.depthBiasConstantFactor = 0.0f; // Optional
@@ -1701,6 +1701,7 @@ void RD_Vulkan::createPipelines() {
   shadowMapConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4) + sizeof(float4) });
   shadowMapConfig.width = SHADOW_MAP_RESOLUTION;
   shadowMapConfig.height = SHADOW_MAP_RESOLUTION;
+  shadowMapConfig.cullingBits = VK_CULL_MODE_BACK_BIT;
   shadowMapPipeline = createGraphicsPipeline(shadowMapConfig, shadowMapPipelineLayout);
 
   PipelineConfig resolveConfig;

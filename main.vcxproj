@@ -74,16 +74,16 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <LibraryPath>D:\Projects\vcpkg\packages\embree3_x64-windows\lib;C:\VulkanSDK\1.2.148.1\Lib;../HydraAPI/dependencies/lib_x64_win;$(LibraryPath)</LibraryPath>
-    <IncludePath>D:\Projects\vcpkg\packages\embree3_x64-windows\include;C:\VulkanSDK\1.2.148.1\Include;../HydraAPI;../HydraAPI/hydra_api;../HydraAPI/dependencies/include;$(IncludePath)</IncludePath>
+    <LibraryPath>D:\Projects\vcpkg\installed\x64-windows\lib;D:\Projects\vcpkg\packages\embree3_x64-windows\lib;C:\VulkanSDK\1.2.148.1\Lib;../HydraAPI/dependencies/lib_x64_win;$(LibraryPath)</LibraryPath>
+    <IncludePath>D:\Projects\vcpkg\installed\x64-windows\include;D:\Projects\vcpkg\packages\embree3_x64-windows\include;C:\VulkanSDK\1.2.148.1\Include;../HydraAPI;../HydraAPI/hydra_api;../HydraAPI/dependencies/include;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
-    <LibraryPath>D:\Projects\vcpkg\packages\embree3_x64-windows\lib;C:\VulkanSDK\1.2.148.1\Lib;../HydraAPI/dependencies/lib_x64_win;$(LibraryPath)</LibraryPath>
-    <IncludePath>D:\Projects\vcpkg\packages\embree3_x64-windows\include;C:\VulkanSDK\1.2.148.1\Include;../HydraAPI;../HydraAPI/hydra_api;../HydraAPI/dependencies/include;$(IncludePath)</IncludePath>
+    <LibraryPath>D:\Projects\vcpkg\installed\x64-windows\lib;D:\Projects\vcpkg\packages\embree3_x64-windows\lib;C:\VulkanSDK\1.2.148.1\Lib;../HydraAPI/dependencies/lib_x64_win;$(LibraryPath)</LibraryPath>
+    <IncludePath>D:\Projects\vcpkg\installed\x64-windows\include;D:\Projects\vcpkg\packages\embree3_x64-windows\include;C:\VulkanSDK\1.2.148.1\Include;../HydraAPI;../HydraAPI/hydra_api;../HydraAPI/dependencies/include;$(IncludePath)</IncludePath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>

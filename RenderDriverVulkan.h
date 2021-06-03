@@ -238,6 +238,7 @@ protected:
     VkDescriptorSetLayout descriptorSetLayout = {};
     uint32_t rtCount = 1;
     std::vector<VkPushConstantRange> pushConstants;
+    VkCullModeFlagBits cullingBits = VK_CULL_MODE_NONE;
 
     uint32_t width, height;
   };
