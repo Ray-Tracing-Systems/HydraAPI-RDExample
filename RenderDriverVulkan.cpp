@@ -1690,6 +1690,7 @@ void RD_Vulkan::createPipelines() {
   geometryConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4) + sizeof(float4) });
   geometryConfig.width = swapChainExtent.width;
   geometryConfig.height = swapChainExtent.height;
+  geometryConfig.cullingBits = VK_CULL_MODE_FRONT_BIT;
   graphicsPipeline = createGraphicsPipeline(geometryConfig, gbufferPipelineLayout);
 
   PipelineConfig shadowMapConfig;
