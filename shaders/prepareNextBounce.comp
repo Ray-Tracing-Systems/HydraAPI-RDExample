@@ -1,0 +1,26 @@
+#version 440
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(push_constant) uniform Parameters {
+  uint patchesCount;
+};
+
+const int MAX_VIRTUAL_PATCHES = 4;
+
+
+layout(binding = 0) buffer readonly layout1 { vec4 bounce[]; };
+layout(binding = 1) buffer readonly layout2 { vec4 colors[]; };
+layout(binding = 2) buffer layout3 { vec4 nextBounce[]; };
+
+float saturate(float a) {
+  return clamp(a, 0, 1);
+}
+
+void main(){
+  if (patchesCount <= gl_GlobalInvocationID.x) {
+    return;
+  }
+  
+  uint patchIdx = gl_GlobalInvocationID.x;
+  nextBounce[patchIdx] = colors[patchIdx] * bounce[patchIdx];
+}

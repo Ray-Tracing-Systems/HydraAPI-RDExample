@@ -1477,6 +1477,33 @@ void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
     vkCmdPushConstants(commandBuffers[current_image], initialLightingPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float4x4), &lighttm);
     vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_COMPUTE, initialLightingPipelineLayout, 0, 1, &initialLightingDs, 0, nullptr);
     vkCmdDispatch(commandBuffers[current_image], (gridSize.x + 3) / 4, (gridSize.x + 3) / 4, (gridSize.x + 3) / 4);
+
+    vkCmdFillBuffer(commandBuffers[current_image], finalLightingBuffer, 0, lightingBufferSize, 0);
+    VkMemoryBarrier memoryBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT };
+
+    for (int i = 0; i < 3; ++i) {
+      vkCmdPipelineBarrier(commandBuffers[current_image], VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_DEPENDENCY_BY_REGION_BIT, 1, &memoryBarrier, 0, nullptr, 0, nullptr);
+
+      vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_COMPUTE, lightBouncePipeline);
+
+      uint32_t patchesCount = currentBounceBufferSize / sizeof(float4);
+      vkCmdPushConstants(commandBuffers[current_image], lightBouncePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t), &patchesCount);
+      vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_COMPUTE, lightBouncePipelineLayout, 0, 1, &lightBounceDs, 0, nullptr);
+      vkCmdDispatch(commandBuffers[current_image], (patchesCount + 255) / 256, 1, 1);
+
+      vkCmdPipelineBarrier(commandBuffers[current_image], VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_DEPENDENCY_BY_REGION_BIT, 1, &memoryBarrier, 0, nullptr, 0, nullptr);
+
+      vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_COMPUTE, nextBouncePipeline);
+
+      vkCmdPushConstants(commandBuffers[current_image], nextBouncePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t), &patchesCount);
+      vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_COMPUTE, nextBouncePipelineLayout, 0, 1, &nextBounceDs, 0, nullptr);
+      vkCmdDispatch(commandBuffers[current_image], (patchesCount + 255) / 256, 1, 1);
+    }
+
+    vkCmdPipelineBarrier(commandBuffers[current_image], VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      VK_DEPENDENCY_BY_REGION_BIT, 1, &memoryBarrier, 0, nullptr, 0, nullptr);
   }
 
   VkRenderPassBeginInfo gbufferRenderPassBeginInfo = {};
@@ -1709,6 +1736,8 @@ void RD_Vulkan::cleanupSwapChain() {
   vkDestroyDescriptorPool(device, resolveDescriptorPool, nullptr);
   vkDestroyDescriptorPool(device, postprocessDescriptorPool, nullptr);
   vkDestroyDescriptorPool(device, initialLightingDescriptorPool, nullptr);
+  vkDestroyDescriptorPool(device, lightBounceDescriptorPool, nullptr);
+  vkDestroyDescriptorPool(device, nextBounceDescriptorPool, nullptr);
 
   vkDestroyFramebuffer(device, shadowMapFramebuffer, nullptr);
   vkDestroyFramebuffer(device, gbufferFramebuffer, nullptr);
@@ -1792,6 +1821,18 @@ void RD_Vulkan::createPipelines() {
   initialLightingConfig.shaderPath = "shaders/initialLighting.spv";
   initialLightingConfig.descriptorSetLayout = initialLightingDescriptorSetLayout;
   initialLightingPipeline = createComputePipeline(initialLightingConfig, initialLightingPipelineLayout);
+
+  ComputePipelineConfig lightBounceConfig;
+  lightBounceConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t) });
+  lightBounceConfig.shaderPath = "shaders/lightBounce.spv";
+  lightBounceConfig.descriptorSetLayout = lightBounceDescriptorSetLayout;
+  lightBouncePipeline = createComputePipeline(lightBounceConfig, lightBouncePipelineLayout);
+
+  ComputePipelineConfig nextBounceConfig;
+  nextBounceConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t) });
+  nextBounceConfig.shaderPath = "shaders/prepareNextBounce.spv";
+  nextBounceConfig.descriptorSetLayout = nextBounceDescriptorSetLayout;
+  nextBouncePipeline = createComputePipeline(nextBounceConfig, nextBouncePipelineLayout);
 }
 
 void RD_Vulkan::recreateSwapChain() {
@@ -1859,7 +1900,9 @@ void RD_Vulkan::createDescriptorSetLayout() {
   gbufferDescriptorSetLayout = create_descriptors_set_layout(device, 1, 0, 1, VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
   resolveDescriptorSetLayout = create_descriptors_set_layout(device, 2, 2, 4, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
   postprocessDescriptorSetLayout = create_descriptors_set_layout(device, 0, 0, 1, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_FRAGMENT_BIT);
-  initialLightingDescriptorSetLayout = create_descriptors_set_layout(device, 2, 2, 1, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT);
+  initialLightingDescriptorSetLayout = create_descriptors_set_layout(device, 2, 4, 1, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT);
+  lightBounceDescriptorSetLayout = create_descriptors_set_layout(device, 0, 6, 0, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT);
+  nextBounceDescriptorSetLayout = create_descriptors_set_layout(device, 0, 3, 0, VK_SHADER_STAGE_COMPUTE_BIT, VK_SHADER_STAGE_COMPUTE_BIT);
 }
 
 void RD_Vulkan::createDescriptorPool() {
@@ -1916,13 +1959,13 @@ void RD_Vulkan::createDescriptorSets() {
     buffersInfo[1].range = sizeof(float4) * (4 + 4);
 
     std::array<VkDescriptorBufferInfo, 2> lightBuffersInfo;
-    lightBuffersInfo[0].buffer = lightingBuffer;
+    lightBuffersInfo[0].buffer = finalLightingBuffer;
     lightBuffersInfo[0].offset = 0;
-    lightBuffersInfo[0].range = lightingBufferSize;
+    lightBuffersInfo[0].range = VK_WHOLE_SIZE;
 
     lightBuffersInfo[1].buffer = lightingWeightsBuffer;
     lightBuffersInfo[1].offset = 0;
-    lightBuffersInfo[1].range = lightingWeightsBufferSize;
+    lightBuffersInfo[1].range = VK_WHOLE_SIZE;
 
     std::vector<VkWriteDescriptorSet> descriptorWrites(3);
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -2196,6 +2239,8 @@ void RD_Vulkan::createLightingBuffer() {
   bmax = to_float4(boxmax, 1);
   std::vector<std::array<float4, DataConfig::MAX_VIRTUAL_PATCHES>> voxelsGridColors(gridSize.x * gridSize.y * gridSize.z);
   std::vector<std::array<float4, DataConfig::MAX_VIRTUAL_PATCHES>> voxelsGridWeightMats(gridSize.x * gridSize.y * gridSize.z);
+  std::vector<uint32_t> idxToVoxelId;
+  std::vector<int> voxelIdToIdx(gridSize.x * gridSize.y * gridSize.z * DataConfig::MAX_VIRTUAL_PATCHES, -1);
   for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
     std::array<float3, DataConfig::MAX_VIRTUAL_PATCHES> colors;
     for (uint32_t j = 0; j < colors.size(); ++j) {
@@ -2204,9 +2249,6 @@ void RD_Vulkan::createLightingBuffer() {
     for (uint32_t j = 0; j < DataConfig::MAX_VIRTUAL_PATCHES; ++j) {
       voxelsGridColors[i][j] = to_float4(colors[j], 0);
     }
-    //voxelsGridColors[i][0] = float4(colors[0].x, colors[1].x, colors[2].x, 0);
-    //voxelsGridColors[i][1] = float4(colors[0].y, colors[1].y, colors[2].y, 0);
-    //voxelsGridColors[i][2] = float4(colors[0].z, colors[1].z, colors[2].z, 0);
   }
   for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
     std::array<float4, DataConfig::MAX_VIRTUAL_PATCHES> matrix;
@@ -2216,13 +2258,80 @@ void RD_Vulkan::createLightingBuffer() {
     }
   }
   VoxelGridLightingIn.read(reinterpret_cast<char*>(&averageLighting), sizeof(float3));
+  uint32_t validPatchesCount;
+  VoxelGridLightingIn.read(reinterpret_cast<char*>(&validPatchesCount), sizeof(validPatchesCount));
+  idxToVoxelId.resize(validPatchesCount);
+  for (uint32_t i = 0; i < validPatchesCount; ++i) {
+    VoxelGridLightingIn.read(reinterpret_cast<char*>(&idxToVoxelId[i]), sizeof(idxToVoxelId[i]));
+  }
   VoxelGridLightingIn.close();
 
-  create_data_buffer(BufferManager::get(), device, voxelsGridColors, lightingBuffer, lightingMemory);
-  create_data_buffer(BufferManager::get(), device, voxelsGridWeightMats, lightingWeightsBuffer, lightingWeightsMemory);
+  for (uint32_t i = 0; i < idxToVoxelId.size(); ++i) {
+    voxelIdToIdx[idxToVoxelId[i]] = i;
+  }
+
+  std::vector<std::pair<uint32_t, float>> ff;
+  std::vector<uint32_t> ffOffsets;
+  std::vector<float4> colors;
+  std::vector<float4> flattenInitialLight;
+  std::vector<float4> flattenWeights;
+  maxFFRow = 0;
+  {
+    std::ifstream FFIn(DataConfig::get().getBinFilePath(L"FF_vox.bin"), std::ios::binary | std::ios::in);
+    uint32_t ffVersion;
+    FFIn.read(reinterpret_cast<char*>(&ffVersion), sizeof(ffVersion));
+    std::cout << "FF version " << ffVersion << std::endl;
+    uint32_t ffRowsCount;
+    FFIn.read(reinterpret_cast<char*>(&ffRowsCount), sizeof(ffRowsCount));
+    for (uint32_t i = 0; i < ffRowsCount; ++i) {
+      uint32_t ffRowLength;
+      FFIn.read(reinterpret_cast<char*>(&ffRowLength), sizeof(ffRowLength));
+      maxFFRow = max(maxFFRow, ffRowLength);
+      uint32_t prevFFSize = static_cast<uint32_t>(ff.size());
+      ff.resize(prevFFSize + ffRowLength);
+      for (uint32_t j = prevFFSize; j < ff.size(); ++j) {
+        FFIn.read(reinterpret_cast<char*>(&ff[j]), sizeof(ff[j]));
+      }
+      ffOffsets.push_back(prevFFSize);
+    }
+    ffOffsets.push_back(static_cast<uint32_t>(ff.size()));
+
+    colors.resize(ffRowsCount);
+    //Skip normals
+    FFIn.seekg(sizeof(float3) * ffRowsCount, FFIn.cur);
+    //Read colors
+    for (uint32_t i = 0; i < ffRowsCount; ++i) {
+      FFIn.read(reinterpret_cast<char*>(&colors[i]), sizeof(float3));
+    }
+  }
+
+  for (uint32_t i = 0; i < voxelsGridColors.size(); ++i) {
+    for (uint32_t j = 0; j < DataConfig::MAX_VIRTUAL_PATCHES; ++j) {
+      flattenInitialLight.push_back(voxelsGridColors[i][j]);
+      flattenWeights.push_back(voxelsGridWeightMats[i][j]);
+    }
+  }
+
+
+  create_data_buffer(BufferManager::get(), device, flattenInitialLight, lightingBuffer, lightingMemory);
+  create_data_buffer(BufferManager::get(), device, flattenWeights, lightingWeightsBuffer, lightingWeightsMemory);
+  create_data_buffer(BufferManager::get(), device, ff, ffBuffer, ffMemory);
+  create_data_buffer(BufferManager::get(), device, ffOffsets, ffOffsetsBuffer, ffOffsetsMemory);
+  std::vector<float4> zeros(voxelsGridColors.size() * DataConfig::MAX_VIRTUAL_PATCHES, float4(0, 0, 0, 0));
+  std::vector<float4> zerosCompact(colors.size(), float4(0, 0, 0, 0));
+  create_data_buffer(BufferManager::get(), device, zeros, finalLightingBuffer, finalLightingMemory);
+  create_data_buffer(BufferManager::get(), device, zerosCompact, currentBounceBuffer, currentBounceMemory);
+  create_data_buffer(BufferManager::get(), device, colors, colorsBuffer, colorsMemory);
+  create_data_buffer(BufferManager::get(), device, idxToVoxelId, idxToVoxelIdBuffer, idxToVoxelIdMemory);
+  create_data_buffer(BufferManager::get(), device, voxelIdToIdx, voxelIdToIdxBuffer, voxelIdToIdxMemory);
 
   lightingBufferSize = static_cast<uint32_t>(sizeof(voxelsGridColors[0]) * voxelsGridColors.size());
   lightingWeightsBufferSize = static_cast<uint32_t>(sizeof(voxelsGridWeightMats[0]) * voxelsGridWeightMats.size());
+  ffBufferSize = static_cast<uint32_t>(sizeof(ff[0]) * ff.size());
+  ffOffsetsBufferSize = static_cast<uint32_t>(sizeof(ffOffsets[0]) * ffOffsets.size());
+  idxToVoxelIdBufferSize = static_cast<uint32_t>(sizeof(idxToVoxelId[0]) * idxToVoxelId.size());
+  voxelIdToIdxBufferSize = static_cast<uint32_t>(sizeof(voxelIdToIdx[0]) * voxelIdToIdx.size());
+  currentBounceBufferSize = static_cast<uint32_t>(sizeof(zerosCompact[0]) * zerosCompact.size());
 }
 
 void RD_Vulkan::prepareDebugPoints() {
@@ -2321,6 +2430,8 @@ RD_Vulkan::~RD_Vulkan()
   vkDestroyDescriptorSetLayout(device, debugPointsDescriptorSetLayout, nullptr);
   vkDestroyDescriptorSetLayout(device, shadowMapDescriptorSetLayout, nullptr);
   vkDestroyDescriptorSetLayout(device, initialLightingDescriptorSetLayout, nullptr);
+  vkDestroyDescriptorSetLayout(device, lightBounceDescriptorSetLayout, nullptr);
+  vkDestroyDescriptorSetLayout(device, nextBounceDescriptorSetLayout, nullptr);
 
   vkDestroyBuffer(device, globalVertexBuffer, nullptr);
   vkFreeMemory(device, globalVertexBufferMemory, nullptr);
@@ -2335,6 +2446,21 @@ RD_Vulkan::~RD_Vulkan()
 
   vkDestroyBuffer(device, lightingWeightsBuffer, nullptr);
   vkFreeMemory(device, lightingWeightsMemory, nullptr);
+
+  vkDestroyBuffer(device, ffBuffer, nullptr);
+  vkFreeMemory(device, ffMemory, nullptr);
+
+  vkDestroyBuffer(device, ffOffsetsBuffer, nullptr);
+  vkFreeMemory(device, ffOffsetsMemory, nullptr);
+
+  vkDestroyBuffer(device, currentBounceBuffer, nullptr);
+  vkFreeMemory(device, currentBounceMemory, nullptr);
+
+  vkDestroyBuffer(device, finalLightingBuffer, nullptr);
+  vkFreeMemory(device, finalLightingMemory, nullptr);
+
+  vkDestroyBuffer(device, colorsBuffer, nullptr);
+  vkFreeMemory(device, colorsMemory, nullptr);
 
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -2730,6 +2856,34 @@ void RD_Vulkan::EndScene()
     VK_CHECK_RESULT(vkCreateDescriptorPool(device, &poolInfo, nullptr, &initialLightingDescriptorPool));
   }
 
+  {
+    std::array<VkDescriptorPoolSize, 1> poolSizes = {};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = 1;
+
+    VK_CHECK_RESULT(vkCreateDescriptorPool(device, &poolInfo, nullptr, &lightBounceDescriptorPool));
+  }
+
+  {
+    std::array<VkDescriptorPoolSize, 1> poolSizes = {};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(swapChainImages.size());
+
+    VkDescriptorPoolCreateInfo poolInfo = {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = 1;
+
+    VK_CHECK_RESULT(vkCreateDescriptorPool(device, &poolInfo, nullptr, &nextBounceDescriptorPool));
+  }
+
   materialsLib.resize(materials.size());
   std::vector<VkDescriptorSetLayout> layouts(materialsLib.size(), gbufferDescriptorSetLayout);
   VkDescriptorSetAllocateInfo allocInfo = {};
@@ -2810,14 +2964,22 @@ void RD_Vulkan::EndScene()
     buffersInfo[1].offset = 0;
     buffersInfo[1].range = sizeof(float4) * (4 + 4);
 
-    std::array<VkDescriptorBufferInfo, 2> lightBuffersInfo;
+    std::array<VkDescriptorBufferInfo, 4> lightBuffersInfo;
     lightBuffersInfo[0].buffer = lightingBuffer;
     lightBuffersInfo[0].offset = 0;
-    lightBuffersInfo[0].range = lightingBufferSize;
+    lightBuffersInfo[0].range = VK_WHOLE_SIZE;
 
     lightBuffersInfo[1].buffer = lightingWeightsBuffer;
     lightBuffersInfo[1].offset = 0;
-    lightBuffersInfo[1].range = lightingWeightsBufferSize;
+    lightBuffersInfo[1].range = VK_WHOLE_SIZE;
+
+    lightBuffersInfo[2].buffer = voxelIdToIdxBuffer;
+    lightBuffersInfo[2].offset = 0;
+    lightBuffersInfo[2].range = VK_WHOLE_SIZE;
+
+    lightBuffersInfo[3].buffer = colorsBuffer;
+    lightBuffersInfo[3].offset = 0;
+    lightBuffersInfo[3].range = VK_WHOLE_SIZE;
 
     std::vector<VkWriteDescriptorSet> descriptorWrites(3);
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -2845,13 +3007,97 @@ void RD_Vulkan::EndScene()
 
     descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[2].dstSet = initialLightingDs;
-    descriptorWrites[2].dstBinding = 4;
+    descriptorWrites[2].dstBinding = 6;
     descriptorWrites[2].dstArrayElement = 0;
     descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     descriptorWrites[2].descriptorCount = 1;
     descriptorWrites[2].pImageInfo = &shadowMapImageInfo;
 
     vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
+  }
+
+  {
+    VkDescriptorSetAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = lightBounceDescriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &lightBounceDescriptorSetLayout;
+    VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &lightBounceDs));
+
+    std::array<VkDescriptorBufferInfo, 6> lightBuffersInfo;
+    lightBuffersInfo[0].buffer = lightingBuffer;
+    lightBuffersInfo[0].offset = 0;
+    lightBuffersInfo[0].range = VK_WHOLE_SIZE;
+
+    lightBuffersInfo[1].buffer = ffBuffer;
+    lightBuffersInfo[1].offset = 0;
+    lightBuffersInfo[1].range = VK_WHOLE_SIZE;
+
+    lightBuffersInfo[2].buffer = ffOffsetsBuffer;
+    lightBuffersInfo[2].offset = 0;
+    lightBuffersInfo[2].range = VK_WHOLE_SIZE;
+
+    lightBuffersInfo[3].buffer = currentBounceBuffer;
+    lightBuffersInfo[3].offset = 0;
+    lightBuffersInfo[3].range = VK_WHOLE_SIZE;
+
+    lightBuffersInfo[4].buffer = finalLightingBuffer;
+    lightBuffersInfo[4].offset = 0;
+    lightBuffersInfo[4].range = VK_WHOLE_SIZE;
+
+    lightBuffersInfo[5].buffer = idxToVoxelIdBuffer;
+    lightBuffersInfo[5].offset = 0;
+    lightBuffersInfo[5].range = VK_WHOLE_SIZE;
+
+    VkWriteDescriptorSet descriptorWrites = {};
+
+    descriptorWrites.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites.dstSet = lightBounceDs;
+    descriptorWrites.dstBinding = 0;
+    descriptorWrites.dstArrayElement = 0;
+    descriptorWrites.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites.descriptorCount = static_cast<uint32_t>(lightBuffersInfo.size());
+    descriptorWrites.pBufferInfo = lightBuffersInfo.data();
+    descriptorWrites.pImageInfo = nullptr; // Optional
+    descriptorWrites.pTexelBufferView = nullptr; // Optional
+
+    vkUpdateDescriptorSets(device, 1, &descriptorWrites, 0, nullptr);
+  }
+
+  {
+    VkDescriptorSetAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = nextBounceDescriptorPool;
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &nextBounceDescriptorSetLayout;
+    VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &nextBounceDs));
+
+    std::array<VkDescriptorBufferInfo, 3> lightBuffersInfo;
+    lightBuffersInfo[0].buffer = currentBounceBuffer;
+    lightBuffersInfo[0].offset = 0;
+    lightBuffersInfo[0].range = VK_WHOLE_SIZE;
+
+    lightBuffersInfo[1].buffer = colorsBuffer;
+    lightBuffersInfo[1].offset = 0;
+    lightBuffersInfo[1].range = VK_WHOLE_SIZE;
+
+    lightBuffersInfo[2].buffer = lightingBuffer;
+    lightBuffersInfo[2].offset = 0;
+    lightBuffersInfo[2].range = VK_WHOLE_SIZE;
+
+    VkWriteDescriptorSet descriptorWrites = {};
+
+    descriptorWrites.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites.dstSet = nextBounceDs;
+    descriptorWrites.dstBinding = 0;
+    descriptorWrites.dstArrayElement = 0;
+    descriptorWrites.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites.descriptorCount = static_cast<uint32_t>(lightBuffersInfo.size());
+    descriptorWrites.pBufferInfo = lightBuffersInfo.data();
+    descriptorWrites.pImageInfo = nullptr; // Optional
+    descriptorWrites.pTexelBufferView = nullptr; // Optional
+
+    vkUpdateDescriptorSets(device, 1, &descriptorWrites, 0, nullptr);
   }
 
   createCommandBuffers();

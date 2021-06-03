@@ -6,3 +6,5 @@ glslc.exe postprocess.frag -O0 -o postprocess.spv -g
 glslc.exe debug_points_vert.vert -O0 -o debug_points_vert.spv -g
 glslc.exe debug_points_frag.frag -O0 -o debug_points_frag.spv -g
 glslc.exe initialLighting.comp -O0 -o initialLighting.spv -g
+glslc.exe lightBounce.comp -O0 -o lightBounce.spv -g
+glslc.exe prepareNextBounce.comp -O0 -o prepareNextBounce.spv -g

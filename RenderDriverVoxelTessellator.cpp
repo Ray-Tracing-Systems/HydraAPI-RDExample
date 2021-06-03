@@ -187,6 +187,9 @@ void RD_VoxelTessellator::InstanceMeshes(int32_t a_mesh_id, const float* a_matri
 bool RD_VoxelTessellator::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode) {
   pugi::xml_node clrNode = a_materialNode.child(L"diffuse").child(L"color");
   pugi::xml_node texNode = a_materialNode.child(L"diffuse").child(L"texture");
+  if (texNode == nullptr) {
+    texNode = a_materialNode.child(L"diffuse").child(L"color").child(L"texture");
+  }
 
   pugi::xml_node emisNode = a_materialNode.child(L"emission").child(L"color"); // no diffuse color ? => draw emission color instead!
 
@@ -614,8 +617,9 @@ void RD_VoxelTessellator::EndScene() {
   }
   hrCameraClose(cam);
 
+  std::map<int, int> texturesRemap;
   for (auto tex : locTex) {
-    auto id = hrTexture2DCreateFromMemory(tex.second.w, tex.second.h, tex.second.bpp, tex.second.data.data());
+    texturesRemap[tex.first] = hrTexture2DCreateFromMemory(tex.second.w, tex.second.h, tex.second.bpp, tex.second.data.data()).id;
   }
 
   for (uint32_t i = 0; i < materials.size(); ++i) {
@@ -636,7 +640,7 @@ void RD_VoxelTessellator::EndScene() {
       if (materials[i].texRef.has_value()) {
         auto texRef = diffuse.append_child();
         texRef.set_name(L"texture");
-        texRef.append_attribute(L"id").set_value(materials[i].texRef.value());
+        texRef.append_attribute(L"id").set_value(texturesRemap[materials[i].texRef.value()]);
         texRef.append_attribute(L"type").set_value(L"texref");
       }
     }

@@ -7,6 +7,7 @@
 #include <filesystem>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cassert>
 
 #include <embree3/rtcore.h>
@@ -29,6 +30,10 @@ const float PI = 3.14159265359f;
 template <typename T>
 T pow2(T x) {
   return x * x;
+}
+
+float lengthSq(const float3& a) {
+  return pow2(a.x) + pow2(a.y) + pow2(a.z);
 }
 
 IHRRenderDriver* CreateFFIntegrator_RenderDriver()
@@ -175,6 +180,9 @@ void RD_FFIntegrator::InstanceMeshes(int32_t a_mesh_id, const float* a_matrices,
 bool RD_FFIntegrator::UpdateMaterial(int32_t a_matId, pugi::xml_node a_materialNode) {
   pugi::xml_node clrNode = a_materialNode.child(L"diffuse").child(L"color");
   pugi::xml_node texNode = a_materialNode.child(L"diffuse").child(L"texture");
+  if (texNode == nullptr) {
+    texNode = a_materialNode.child(L"diffuse").child(L"color").child(L"texture");
+  }
 
   pugi::xml_node emisNode = a_materialNode.child(L"emission").child(L"color"); // no diffuse color ? => draw emission color instead!
 
@@ -391,23 +399,34 @@ class EmbreeTracer {
 
 public:
   EmbreeTracer(const std::vector<RD_FFIntegrator::Triangle>& triangles) {
+    //float3* points = new float3[triangles.size() * 3 + 4];
+    //memset(points, 0, (triangles.size() * 3 + 4) * sizeof(float3));
+    //float3* pointsWorkAddress = reinterpret_cast<float3*>((reinterpret_cast<uint64_t>(points) + sizeof(float3)) & sizeof(float3));
+    //float3* indices = new float3[triangles.size() * 3 + 4];
+    //memset(points, 0, (triangles.size() * 3 + 4) * sizeof(float3));
+    //float3* pointsWorkAddress = reinterpret_cast<float3*>((reinterpret_cast<uint64_t>(points) + sizeof(float3)) & sizeof(float3));
     std::vector<float3> points(triangles.size() * 3);
+    std::vector<float2> texCoord(triangles.size() * 3);
     std::vector<uint32_t> indices(triangles.size() * 3);
     for (int i = 0; i < triangles.size(); ++i) {
       for (int j = 0; j < 3; ++j) {
         points[i * 3 + j] = make_float3(triangles[i].points[j]);
         indices[i * 3 + j] = i * 3 + j;
+        texCoord[i * 3 + j] = triangles[i].texCoords[j];
       }
     }
 
     Device = rtcNewDevice("threads=0,frequency_level=simd512"); CHECK_EMBREE
     Scene = rtcNewScene(Device); CHECK_EMBREE
     RTCGeometry geometry = rtcNewGeometry(Device, RTC_GEOMETRY_TYPE_TRIANGLE); CHECK_EMBREE
+    rtcSetGeometryVertexAttributeCount(geometry, 1); CHECK_EMBREE
     RTCBuffer indicesBuffer = rtcNewSharedBuffer(Device, reinterpret_cast<void*>(indices.data()), indices.size() * sizeof(indices[0])); CHECK_EMBREE
-    RTCBuffer pointsBuffer = rtcNewSharedBuffer(Device, reinterpret_cast<void*>(points.data()), points.size() * sizeof(points[0])); CHECK_EMBREE
+    RTCBuffer pointsBuffer = rtcNewSharedBuffer(Device, reinterpret_cast<void*>(points.data()), triangles.size() * 3 * sizeof(points[0])); CHECK_EMBREE
+    RTCBuffer tcBuffer = rtcNewSharedBuffer(Device, reinterpret_cast<void*>(texCoord.data()), texCoord.size() * sizeof(texCoord[0])); CHECK_EMBREE
 
     rtcSetGeometryBuffer(geometry, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, indicesBuffer, 0, sizeof(uint32_t) * 3, indices.size() / 3); CHECK_EMBREE
-    rtcSetGeometryBuffer(geometry, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, pointsBuffer, 0, sizeof(points[0]), points.size()); CHECK_EMBREE
+    rtcSetGeometryBuffer(geometry, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, pointsBuffer, 0, sizeof(points[0]), triangles.size() * 3); CHECK_EMBREE
+    rtcSetGeometryBuffer(geometry, RTC_BUFFER_TYPE_VERTEX_ATTRIBUTE, 0, RTC_FORMAT_FLOAT2, tcBuffer, 0, sizeof(texCoord[0]), texCoord.size()); CHECK_EMBREE
     rtcCommitGeometry(geometry); CHECK_EMBREE
     rtcAttachGeometry(Scene, geometry); CHECK_EMBREE
     rtcReleaseGeometry(geometry); CHECK_EMBREE
@@ -418,6 +437,8 @@ public:
 
     RTCBounds bounds;
     rtcGetSceneBounds(Scene, &bounds);
+
+    //delete[] points;
   }
 
   std::array<uint16_t, WORDS_FOR_OCCLUSION> traceRays(const SamplesPacket& samples1, const SamplesPacket& samples2) {
@@ -462,6 +483,10 @@ public:
     std::vector<RTCRay16> raysPacket(samplesWords);
     uint32_t invisibleCount = 0;
     std::vector<bool> emptyPacket(samplesWords, true);
+    std::vector<std::vector<int>> validMask(samplesWords);
+    for (uint32_t i = 0; i < samplesWords; ++i) {
+      validMask[i].assign(16, ~0);
+    }
     for (int i = 0, target_id = 0; i < samples1.size(); ++i) {
       const FFSample& s1 = samples1[i];
       for (int j = 0; j < samples2.size(); ++j, ++target_id) {
@@ -470,6 +495,12 @@ public:
         const FFSample& s2 = samples2[j];
         const float BIAS = 1e-6f;
         float3 dir = s2.pos - s1.pos;
+        if (dot(dir, s1.normal) < 0 || dot(dir, s2.normal) > 0 || lengthSq(dir) < 1e-4f) {
+          invisibleCount++;
+          validMask[packet_id][sampleInPacket] = 0;
+        } else {
+          emptyPacket[packet_id] = false;
+        }
         raysPacket[packet_id].org_x[sampleInPacket] = s1.pos.x;
         raysPacket[packet_id].org_y[sampleInPacket] = s1.pos.y;
         raysPacket[packet_id].org_z[sampleInPacket] = s1.pos.z;
@@ -478,11 +509,6 @@ public:
         raysPacket[packet_id].dir_y[sampleInPacket] = dir.y;
         raysPacket[packet_id].dir_z[sampleInPacket] = dir.z;
         raysPacket[packet_id].tfar[sampleInPacket] = 1.f - BIAS;
-        if (dot(dir, s1.normal) < 0 || dot(dir, s2.normal) > 0) {
-          invisibleCount++;
-        } else {
-          emptyPacket[packet_id] = false;
-        }
       }
     }
     if (invisibleCount == samplesPairs) {
@@ -490,13 +516,13 @@ public:
       return result;
     }
 
-    const int validMask = ~0u;
+#pragma omp parallel for num_threads(8)
     for (int i = 0; i < (int)samplesWords; ++i) {
       if (emptyPacket[i]) {
         result[i] = 0xFFFF;
         continue;
       }
-      rtcOccluded16(&validMask, Scene, &IntersectionContext, &raysPacket[i]); //CHECK_EMBREE
+      rtcOccluded16(reinterpret_cast<int*>(validMask[i].data()), Scene, &IntersectionContext, &raysPacket[i]); //CHECK_EMBREE
       for (uint32_t k = 0; k < RT_PACKET_SIZE; ++k) {
         if (std::isinf(raysPacket[i].tfar[k])) {
           result[i] |= 1u << k;
@@ -574,7 +600,10 @@ public:
     const std::vector<float3>& colors,
     const std::vector<float3>& emissions,
     const std::vector<float>& squares,
-    const std::vector<float3>& normals) {
+    const std::vector<float3>& normals,
+    const std::vector<RD_FFIntegrator::Triangle>& triangles,
+    std::map<int, uint32_t>& matTexture,
+    std::map<int, RD_FFIntegrator::TexData>& textures) {
     // Generate positions
     for (uint32_t i = 0; i < positions.size(); ++i) {
       positions[i] += center;
@@ -595,9 +624,9 @@ public:
       }
     }
     // Trace rays
-    const int validMask = ~0u;
+    const std::vector<int> validMask(16, ~0u);
     for (uint32_t i = 0; i < WORDS_FOR_SAMPLES; ++i) {
-      rtcIntersect16(&validMask, Scene, &IntersectionContext, &rays[i]); CHECK_EMBREE
+      rtcIntersect16(validMask.data(), Scene, &IntersectionContext, &rays[i]); CHECK_EMBREE
     }
     // Gather sampled results
     std::vector<FFSample> samples;
@@ -608,17 +637,35 @@ public:
           continue;
         }
         // Skip back faces
-        const float3 normal = normalize(normals[rays[packetId].hit.primID[localId]]);
+        const uint32_t primId = rays[packetId].hit.primID[localId];
+        const float3 normal = normalize(normals[primId]);
         if (dot(normal, -directions[rayId]) < 0.0) {
           continue;
         }
-        // Extract color and square by polygonId
-        const float3 color = colors[rays[packetId].hit.primID[localId]];
-        const float3 emission = emissions[rays[packetId].hit.primID[localId]];
-        const float square = squares[rays[packetId].hit.primID[localId]];
-        // Generate sample
+
         const float3 position = positions[rayId] + directions[rayId] * rays[packetId].ray.tfar[localId];
-        samples.push_back(FFSample{ position, normal, color, square, emission, rays[packetId].hit.primID[localId] });
+        float2 uv = (
+          triangles[primId].texCoords[0] * rays[packetId].hit.u[localId]
+          + triangles[primId].texCoords[1] * rays[packetId].hit.v[localId]
+          + triangles[primId].texCoords[2] * (1 - rays[packetId].hit.u[localId] - rays[packetId].hit.u[localId])
+        );
+        float3 texColor = float3(1, 1, 1);
+        if (matTexture.count(triangles[primId].materialId)) {
+          RD_FFIntegrator::TexData texData = textures[matTexture[triangles[primId].materialId]];
+          int x = static_cast<int>(uv.x * texData.w) % texData.w;
+          int y = static_cast<int>(uv.y * texData.h) % texData.h;
+          uint32_t r = texData.data[(y * texData.w + x) * 4] & 0xFF;
+          uint32_t g = texData.data[(y * texData.w + x) * 4 + 1] & 0xFF;
+          uint32_t b = texData.data[(y * texData.w + x) * 4 + 2] & 0xFF;
+          texColor = float3((float)r, (float)g, (float)b) / 255.0;
+        }
+
+        // Extract color and square by polygonId
+        const float3 color = colors[primId] * texColor;
+        const float3 emission = emissions[primId];
+        const float square = squares[primId];
+        // Generate sample
+        samples.push_back(FFSample{ position, normal, color, square, emission, primId });
       }
     }
     return samples;
@@ -894,7 +941,7 @@ void RD_FFIntegrator::ComputeFF_voxelized(
           fin.read(reinterpret_cast<char*>(&value), sizeof(value));
           FF[i][j].first = idx;
           FF[i][j].second = value;
-          assert(value <= 1 && "Too big FF");
+          //assert(value <= 1 && "Too big FF");
           rowSum += value;
         }
       }
@@ -968,7 +1015,7 @@ void RD_FFIntegrator::ComputeFF_voxelized(
   for (uint32_t i = 0; i < voxelsCount; ++i) {
     // Trace rays from sphere surface to sphere center
     /*samples[i] = tracer.traceRaysTo(hammDirs, voxels_centers[i], colors, emission, squares, normals);*/
-    samples[i] = tracer.traceRays(positions, directions, voxels_centers[i], colors, emission, squares, normals);
+    samples[i] = tracer.traceRays(positions, directions, voxels_centers[i], colors, emission, squares, normals, triangles, matTexture, textures);
     std::unordered_map<uint32_t, uint32_t> primCounter;
     for (const auto& sample : samples[i]) {
       primCounter[sample.primId]++;
@@ -1020,10 +1067,14 @@ void RD_FFIntegrator::ComputeFF_voxelized(
   std::vector<FFMatrix> voxelRow;
   std::vector<uint32_t> patchesToProcess;
   std::vector<FFSample> finalSamples;
+  std::chrono::time_point<std::chrono::steady_clock> start = std::chrono::high_resolution_clock::now();
   for (uint32_t voxelId = 0; voxelId < voxelsCount; ++voxelId) {
     // Compute form-factors between current voxel and further voxels
-    if (100 * voxelId / voxelsCount < 100 * (voxelId + 1) / voxelsCount) {
-      std::cout << 100 * (voxelId + 1) / voxelsCount << "% finished" << std::endl;
+    if (10000 * voxelId / voxelsCount < 10000 * (voxelId + 1) / voxelsCount) {
+      std::cout << 100.0 * (voxelId + 1) / voxelsCount << "% finished for ";
+      auto duration = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start);
+      std::cout << duration.count() / 1000.f << " ms" << std::endl;
+      start = std::chrono::high_resolution_clock::now();
     }
     std::vector<FFSample>& samples1 = samples[voxelId];
     if (samples1.empty()) {
@@ -1099,14 +1150,14 @@ void RD_FFIntegrator::ComputeFF_voxelized(
       }
     }
 
-    for (uint32_t i = static_cast<uint32_t>(samples1.size()) - 1; i > 0; --i) {
-      for (uint32_t j = 0; j < i; ++j) {
-        if (dot(samples1[i].normal, samples1[j].normal) > 1.0f - 1e-5f) {
-          merge_two_patches(samples1, j, i, voxelRow, virtualPatchesToPointsFF);
-          break;
-        }
-      }
-    }
+    //for (uint32_t i = static_cast<uint32_t>(samples1.size()) - 1; i > 0; --i) {
+    //  for (uint32_t j = 0; j < i; ++j) {
+    //    if (dot(samples1[i].normal, samples1[j].normal) > 1.0f - 1e-5f && lengthSq(samples1[i].color - samples1[j].color) < 1e-3f) {
+    //      merge_two_patches(samples1, j, i, voxelRow, virtualPatchesToPointsFF);
+    //      break;
+    //    }
+    //  }
+    //}
 
     // Merge samples by form-factors
     std::vector<std::vector<float>> similarityMatrix(samples1.size());
@@ -1583,10 +1634,6 @@ void merge_ff_by_polygon(std::vector<uint32_t>& voxels,
   ff = std::move(compressedFF);
 }
 
-float lengthSq(const float3& a) {
-  return pow2(a.x) + pow2(a.y) + pow2(a.z);
-}
-
 void merge_ff_by_ff_values(std::vector<uint32_t>& voxels,
   std::vector<float3>& colors,
   std::vector<float3>& emissions,
@@ -1897,6 +1944,7 @@ void RD_FFIntegrator::EndScene() {
   std::vector<std::array<float, DataConfig::MAX_VIRTUAL_PATCHES>> inVoxelSquares(gridSize.x* gridSize.y* gridSize.z);
   std::vector<std::array<float3, DataConfig::MAX_VIRTUAL_PATCHES>> inVoxelNormals(gridSize.x* gridSize.y* gridSize.z);
   std::vector<std::array<float4, DataConfig::MAX_VIRTUAL_PATCHES>> inVoxelWeightMatrix(gridSize.x* gridSize.y* gridSize.z);
+  std::vector<std::array<int, DataConfig::MAX_VIRTUAL_PATCHES>> inVoxelInitIdx(gridSize.x * gridSize.y * gridSize.z, {-1, -1, -1, -1});
 
   float3 averageLighting(0, 0, 0);
   for (auto l : lighting) {
@@ -1909,11 +1957,21 @@ void RD_FFIntegrator::EndScene() {
     float square = 1.0f;// squares[i];
     float3 light = lighting[i];
     float3 normal = normals[i];
+    int inVoxelIdx = i;
     for (uint32_t j = 0; j < DataConfig::MAX_VIRTUAL_PATCHES; ++j) {
       if (square > inVoxelSquares[voxelId][j]) {
         std::swap(square, inVoxelSquares[voxelId][j]);
         std::swap(light, voxelsGridColors[voxelId][j]);
         std::swap(normal, inVoxelNormals[voxelId][j]);
+        std::swap(inVoxelIdx, inVoxelInitIdx[voxelId][j]);
+      }
+    }
+  }
+  std::vector<uint32_t> idxToVoxelId(lighting.size());
+  for (uint32_t i = 0; i < inVoxelInitIdx.size(); ++i) {
+    for (uint32_t j = 0; j < DataConfig::MAX_VIRTUAL_PATCHES; ++j) {
+      if (inVoxelInitIdx[i][j] != -1) {
+        idxToVoxelId[inVoxelInitIdx[i][j]] = i * DataConfig::MAX_VIRTUAL_PATCHES + j;
       }
     }
   }
@@ -1968,6 +2026,11 @@ void RD_FFIntegrator::EndScene() {
     VoxelGridLightingOut.write(reinterpret_cast<char*>(&inVoxelWeightMatrix[i]), sizeof(inVoxelWeightMatrix[i]));
   }
   VoxelGridLightingOut.write(reinterpret_cast<char*>(&averageLighting), sizeof(averageLighting));
+  uint32_t validPatchesCount = static_cast<uint32_t>(idxToVoxelId.size());
+  VoxelGridLightingOut.write(reinterpret_cast<char*>(&validPatchesCount), sizeof(validPatchesCount));
+  for (uint32_t i = 0; i < validPatchesCount; ++i) {
+    VoxelGridLightingOut.write(reinterpret_cast<char*>(&idxToVoxelId[i]), sizeof(idxToVoxelId[i]));
+  }
   VoxelGridLightingOut.close();
 }
 

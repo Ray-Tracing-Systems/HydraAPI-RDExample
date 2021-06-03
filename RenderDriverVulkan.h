@@ -350,12 +350,16 @@ protected:
   VkDescriptorSetLayout postprocessDescriptorSetLayout;
   VkDescriptorSetLayout debugPointsDescriptorSetLayout;
   VkDescriptorSetLayout initialLightingDescriptorSetLayout;
+  VkDescriptorSetLayout lightBounceDescriptorSetLayout;
+  VkDescriptorSetLayout nextBounceDescriptorSetLayout;
   VkPipelineLayout shadowMapPipelineLayout;
   VkPipelineLayout gbufferPipelineLayout;
   VkPipelineLayout debugPointsPipelineLayout;
   VkPipelineLayout resolvePipelineLayout;
   VkPipelineLayout postprocessPipelineLayout;
   VkPipelineLayout initialLightingPipelineLayout;
+  VkPipelineLayout lightBouncePipelineLayout;
+  VkPipelineLayout nextBouncePipelineLayout;
   VkRenderPass gbufferRenderPass;
   VkRenderPass shadowMapRenderPass;
   VkRenderPass resolveRenderPass;
@@ -366,6 +370,8 @@ protected:
   VkPipeline debugPointsPipeline;
   VkPipeline postprocessPipeline;
   VkPipeline initialLightingPipeline;
+  VkPipeline lightBouncePipeline;
+  VkPipeline nextBouncePipeline;
   VkCommandPool commandPool;
 
   VkImage depthImage;
@@ -404,6 +410,8 @@ protected:
   VkDescriptorPool gbufferDescriptorPool = {};
   VkDescriptorPool shadowMapDescriptorPool = {};
   VkDescriptorPool initialLightingDescriptorPool = {};
+  VkDescriptorPool lightBounceDescriptorPool = {};
+  VkDescriptorPool nextBounceDescriptorPool = {};
   VkDescriptorSet resolveDescriptorSets;
   std::vector<VkDescriptorSet> postprocessDescriptorSets;
 
@@ -419,6 +427,8 @@ protected:
   std::vector<VkDescriptorSet> materialsLib;
   VkDescriptorSet materialsShadowDs;
   VkDescriptorSet initialLightingDs;
+  VkDescriptorSet lightBounceDs;
+  VkDescriptorSet nextBounceDs;
   VkBuffer resolveConstants;
   VkDeviceMemory resolveConstantsMemory;
 
@@ -453,6 +463,27 @@ protected:
   HydraLiteMath::float4 bmin;
   HydraLiteMath::float4 bmax;
   HydraLiteMath::float4 averageLighting;
+  VkBuffer ffBuffer;
+  VkDeviceMemory ffMemory;
+  uint32_t ffBufferSize;
+  VkBuffer ffOffsetsBuffer;
+  VkDeviceMemory ffOffsetsMemory;
+  uint32_t ffOffsetsBufferSize;
+  uint32_t maxFFRow;
+  VkBuffer currentBounceBuffer;
+  VkDeviceMemory currentBounceMemory;
+  uint32_t currentBounceBufferSize;
+  VkBuffer finalLightingBuffer;
+  VkDeviceMemory finalLightingMemory;
+  uint32_t finalLightingBufferSize;
+  VkBuffer colorsBuffer;
+  VkDeviceMemory colorsMemory;
+  VkBuffer idxToVoxelIdBuffer;
+  VkDeviceMemory idxToVoxelIdMemory;
+  uint32_t idxToVoxelIdBufferSize;
+  VkBuffer voxelIdToIdxBuffer;
+  VkDeviceMemory voxelIdToIdxMemory;
+  uint32_t voxelIdToIdxBufferSize;
 
   HydraLiteMath::float4x4 lighttm;
   bool hasDirectLight = false;

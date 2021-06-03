@@ -1,0 +1,41 @@
+#version 440
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+layout(push_constant) uniform Parameters {
+  uint patchesCount;
+};
+
+const int MAX_VIRTUAL_PATCHES = 4;
+
+struct FFPair {
+    uint idx;
+    float value;
+};
+
+layout(binding = 0) buffer readonly layout1 { vec4 lightingBuffer[]; };
+layout(binding = 1) buffer readonly layout2 { FFPair ff[]; };
+layout(binding = 2) buffer readonly layout3 { uint ffOffsets[]; };
+layout(binding = 3) buffer layout4 { vec4 bounce[]; };
+layout(binding = 4) buffer layout5 { vec4 finalLighting[]; };
+layout(binding = 5) buffer layout6 { uint idxToVoxelId[]; };
+
+float saturate(float a) {
+  return clamp(a, 0, 1);
+}
+
+void main(){
+  if (patchesCount <= gl_GlobalInvocationID.x) {
+    return;
+  }
+
+  uint patchIdx = gl_GlobalInvocationID.x;
+  uint begin = ffOffsets[patchIdx];
+  uint end = ffOffsets[patchIdx + 1];
+  vec4 lighting = vec4(0);
+  for (uint i = begin; i < end; ++i) {
+    FFPair ffValue = ff[i];
+    lighting += ffValue.value * lightingBuffer[ffValue.idx];
+  }
+  bounce[patchIdx] = lighting;
+  finalLighting[idxToVoxelId[patchIdx]] += lighting;
+}

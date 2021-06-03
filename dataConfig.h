@@ -10,7 +10,7 @@ class DataConfig {
   DataConfig() = default;
   ~DataConfig() = default;
 public:
-  static const uint32_t FF_VERSION = 9;
+  static const uint32_t FF_VERSION = 10;
   static const uint32_t MAX_VIRTUAL_PATCHES = 4;
 
 
