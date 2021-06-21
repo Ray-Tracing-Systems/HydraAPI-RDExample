@@ -248,11 +248,25 @@ protected:
     float innerRadius; float outerRadius;
   };
 
+  struct SpotLightTemplate {
+    HydraLiteMath::float3 color;
+    float innerCos; float outerCos;
+  };
+
   struct DirectLight {
     HydraLiteMath::float3 position;
     float innerRadius;
     HydraLiteMath::float3 direction;
     float outerRadius;
+    HydraLiteMath::float3 color;
+    float padding;
+  };
+
+  struct SpotLight {
+    HydraLiteMath::float3 position;
+    float innerCos;
+    HydraLiteMath::float3 direction;
+    float outerCos;
     HydraLiteMath::float3 color;
     float padding;
   };
@@ -397,7 +411,9 @@ protected:
   std::unique_ptr<Texture> defaultTexture;
   std::vector<Material> materials;
   std::unordered_map<uint32_t, DirectLightTemplate> directLightLib;
+  std::unordered_map<uint32_t, SpotLightTemplate> spotLightLib;
   std::vector<DirectLight> directLights;
+  std::vector<SpotLight> spotLights;
   std::unordered_map<int, StaticModel> modelsLib;
   std::vector<StaticModelInstances> modelInstances;
   std::vector<VkDescriptorSet> materialsLib;
@@ -422,6 +438,7 @@ protected:
   HydraLiteMath::float4x4 globtm;
   HydraLiteMath::float4x4 lighttm;
   bool hasDirectLight = false;
+  bool hasSpotLight = false;
   uint32_t screenMipLevels = 0;
   ScreenshotState screenshotState = ScreenshotState::OFF;
   VkBuffer screenshotBuffer = {};

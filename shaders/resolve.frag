@@ -7,6 +7,15 @@ struct DirectLight {
   vec3 direction;
   float outerRadius;
   vec3 color;
+  uint padding;
+};
+
+struct SpotLight {
+  vec3 position;
+  float innerCos;
+  vec3 direction;
+  float outerCos;
+  vec3 color;
   float padding;
 };
 
@@ -17,6 +26,7 @@ layout(push_constant) uniform lighttmPC
 
 layout(binding = 0) uniform Lights {
   DirectLight directLights[1];
+  SpotLight spotLights[1];
 } lights;
 
 layout (binding = 1) uniform DrawConsts {
@@ -65,6 +75,32 @@ vec3 ComputeLighting(vec3 worldPos, vec3 normal, DirectLight light) {
   return max(dot(pointToLightDir, normal), 0.0) * light.color * distMult * shadow;
 }
 
+vec3 ComputeLighting(vec3 worldPos, vec3 normal, SpotLight light) {
+  if (length(light.direction) < 1e-5) {
+    return vec3(0);
+  }
+  vec3 pointToLight = light.position - worldPos;
+  vec3 pointToLightDir = normalize(pointToLight);
+  float lightDot = dot(-pointToLightDir, normalize(light.direction));
+  if (lightDot <= 0) {
+    return vec3(0);
+  }
+  vec4 lightPos = lighttm * vec4(worldPos, 1.0);
+  lightPos /= lightPos.w;
+  vec2 lightUv = lightPos.xy * 0.5 + 0.5;
+  float shadow = 0.0;
+  ivec2 shadowSize = textureSize(shadowMap, 0);
+  for (float x = -1.5; x <= 1.5; x += 1.0) {
+    for (float y = -1.5; y <= 1.5; y += 1.0) {
+      float shadowDepth = texture(shadowMap, lightUv + vec2(x, y) / shadowSize).x;
+      shadow += shadowDepth < lightPos.z - 1e-5f ? 0.0 : 1.0 / 16.0;
+    }
+  }
+
+  float distMult = saturate((light.innerCos - dot(normalize(light.direction), -normalize(pointToLight))) / (light.innerCos - light.outerCos));
+  return max(dot(pointToLightDir, normal), 0.0) * light.color * distMult * shadow;
+}
+
 void main() {
   vec3 diffuse = texture(diffuse, fragTexCoord).rgb;
   vec3 normal = texture(normals, fragTexCoord).xyz;
@@ -75,6 +111,7 @@ void main() {
   if (emissionMult > 0) {
     outColor.rgb = diffuse * emissionMult;
   } else {
-    outColor.rgb = diffuse * ComputeLighting(unproj.xyz, normal, lights.directLights[0]);
+    vec3 lighting = lights.directLights[0].padding == 0 ? ComputeLighting(unproj.xyz, normal, lights.directLights[0]) : ComputeLighting(unproj.xyz, normal, lights.spotLights[0]);
+    outColor.rgb = diffuse * lighting;
   }
 }

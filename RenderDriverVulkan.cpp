@@ -27,6 +27,8 @@ using namespace HydraLiteMath;
 #include <iostream>
 
 
+const float PI = 3.14159265359f;
+
 IHRRenderDriver* CreateVulkan_RenderDriver()
 {
   return new RD_Vulkan;
@@ -1406,7 +1408,7 @@ void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
   VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffers[current_image], &beginInfo));
 
   VkDeviceSize zeroOffset = 0;
-  if (hasDirectLight)
+  if (hasDirectLight || hasSpotLight)
   {
     VkRenderPassBeginInfo shadowMapRenderPassBeginInfo = {};
     shadowMapRenderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -1702,7 +1704,7 @@ void RD_Vulkan::createPipelines() {
   shadowMapConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4) + sizeof(float4) });
   shadowMapConfig.width = SHADOW_MAP_RESOLUTION;
   shadowMapConfig.height = SHADOW_MAP_RESOLUTION;
-  shadowMapConfig.cullingBits = VK_CULL_MODE_BACK_BIT;
+  shadowMapConfig.cullingBits = VK_CULL_MODE_FRONT_BIT;// VK_CULL_MODE_BACK_BIT;
   shadowMapPipeline = createGraphicsPipeline(shadowMapConfig, shadowMapPipelineLayout);
 
   PipelineConfig resolveConfig;
@@ -1826,7 +1828,7 @@ void RD_Vulkan::createDescriptorSets() {
     std::array<VkDescriptorBufferInfo, 2> buffersInfo;
     buffersInfo[0].buffer = lightsBuffer;
     buffersInfo[0].offset = 0;
-    buffersInfo[0].range = sizeof(DirectLight);
+    buffersInfo[0].range = sizeof(DirectLight) + sizeof(SpotLight);
 
     buffersInfo[1].buffer = resolveConstants;
     buffersInfo[1].offset = 0;
@@ -2265,6 +2267,14 @@ bool RD_Vulkan::UpdateLight(int32_t a_lightIdId, pugi::xml_node a_lightNode)
     newTemplate.innerRadius = sizeNode.attribute(L"inner_radius").as_float();
     newTemplate.outerRadius = sizeNode.attribute(L"outer_radius").as_float();
     directLightLib[a_lightIdId] = newTemplate;
+  } else if (lightType.as_string() == std::wstring(L"point")) {
+    SpotLightTemplate newTemplate;
+    auto intencity = a_lightNode.child(L"intensity");
+    newTemplate.color = parse_color(intencity.child(L"color").attribute(L"val").as_string());
+    newTemplate.color *= intencity.child(L"multiplier").attribute(L"val").as_float();
+    newTemplate.innerCos = std::cos(a_lightNode.child(L"falloff_angle").attribute(L"val").as_float() / 360.f * PI);
+    newTemplate.outerCos = std::cos(a_lightNode.child(L"falloff_angle2").attribute(L"val").as_float() / 360.f * PI);
+    spotLightLib[a_lightIdId] = newTemplate;
   } else {
     std::wstring type = lightType.as_string();
     std::string castedType(type.begin(), type.end());
@@ -2438,7 +2448,7 @@ void RD_Vulkan::BeginScene(pugi::xml_node a_sceneNode)
 }
 
 void RD_Vulkan::createBuffers() {
-  BufferManager::get().createBuffer(sizeof(directLights[0]), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightsBuffer, lightsBufferMemory);
+  BufferManager::get().createBuffer(sizeof(directLights[0]) + sizeof(spotLights[0]), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightsBuffer, lightsBufferMemory);
   BufferManager::get().createBuffer(sizeof(float4x4), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, resolveConstants, resolveConstantsMemory);
 }
 
@@ -2457,6 +2467,16 @@ void RD_Vulkan::EndScene()
   {
     vkMapMemory(device, lightsBufferMemory, 0, directLights.size() * sizeof(directLights[0]), 0, &data);
     memcpy(data, directLights.data(), directLights.size() * sizeof(directLights[0]));
+    vkUnmapMemory(device, lightsBufferMemory);
+  } else {
+    vkMapMemory(device, lightsBufferMemory, 0, sizeof(directLights[0]), 0, &data);
+    memset(data, ~0, sizeof(DirectLight));
+    vkUnmapMemory(device, lightsBufferMemory);
+  }
+  if (hasSpotLight)
+  {
+    vkMapMemory(device, lightsBufferMemory, sizeof(directLights[0]), spotLights.size() * sizeof(spotLights[0]), 0, &data);
+    memcpy(data, spotLights.data(), spotLights.size() * sizeof(spotLights[0]));
     vkUnmapMemory(device, lightsBufferMemory);
   }
 
@@ -2679,12 +2699,18 @@ void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
   memcpy(data, viewVecsData.data(), sizeof(viewVecsData));
   vkUnmapMemory(device, resolveConstantsMemory);
 
-  if (hasDirectLight)
-  {
+  if (hasDirectLight) {
     float4x4 pr = orthographic_projection_matrix(-directLights[0].outerRadius, directLights[0].outerRadius, -directLights[0].outerRadius, directLights[0].outerRadius, 0.1, 200.0);
     float4x4 view = lookAtTransposed(directLights[0].position, directLights[0].direction + directLights[0].position, float3(0, 1, 0));
 
     lighttm = mul(view, pr);
+  } else if (hasSpotLight) {
+    const float4x4 view = lookAtTransposed(spotLights[0].position, spotLights[0].position + spotLights[0].direction, float3(1, 0, 0));
+    const float aspect = 1.0f;
+    float4x4 proj = projectionMatrixTransposed((std::acos(spotLights[0].outerCos) * 180.0f / PI + 1.0f) * 2.0f, aspect, 0.0001f, 100.0f);
+    proj.M(1, 1) *= -1.f;
+
+    lighttm = mul(view, proj);
   }
 }
 
@@ -2751,9 +2777,23 @@ void RD_Vulkan::InstanceLights(int32_t a_light_id, const float* a_matrix, pugi::
       matrix = transpose(matrix);
       lightToAdd.direction = -to_float3(matrix.row[1]);
       lightToAdd.position = to_float3(matrix.row[3]);
+      lightToAdd.padding = 0;
       directLights.push_back(lightToAdd);
-      hasDirectLight = true;
     }
+    hasDirectLight = true;
+  } else if (spotLightLib.count(lightId)) {
+    for (uint32_t i = 0; i < a_instNum; ++i) {
+      SpotLight lightToAdd;
+      lightToAdd.color = spotLightLib[lightId].color;
+      lightToAdd.innerCos = spotLightLib[lightId].innerCos;
+      lightToAdd.outerCos = spotLightLib[lightId].outerCos;
+      float4x4 matrix(a_matrix + i * 16);
+      matrix = transpose(matrix);
+      lightToAdd.direction = -to_float3(matrix.row[1]);
+      lightToAdd.position = to_float3(matrix.row[3]);
+      spotLights.push_back(lightToAdd);
+    }
+    hasSpotLight = true;
   }
 }
 
