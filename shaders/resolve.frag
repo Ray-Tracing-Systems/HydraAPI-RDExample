@@ -22,6 +22,7 @@ struct SpotLight {
 layout(push_constant) uniform lighttmPC
 {
   mat4 lighttm;
+  float directMultiplier;
 };
 
 layout(binding = 0) uniform Lights {
@@ -181,7 +182,7 @@ void main() {
     outColor.rgb = diffuse * emissionMult;
   } else {
     vec3 lighting = lights.directLights[0].padding == 0 ? ComputeLighting(unproj.xyz, normal, lights.directLights[0]) : ComputeLighting(unproj.xyz, normal, lights.spotLights[0]);
-    outColor.rgb = diffuse * (lighting + sampleLighting(unproj.xyz, normal));
+    outColor.rgb = diffuse * (lighting * directMultiplier + sampleLighting(unproj.xyz, normal));
   }
   outColor.rgb = pow(outColor.rgb, vec3(1.0 / 2.2));
 }

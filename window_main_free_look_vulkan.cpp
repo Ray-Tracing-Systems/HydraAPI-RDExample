@@ -43,6 +43,7 @@ static double g_scrollY              = 0.0f;
 Camera       g_cam;
 bool screenShot = false;
 bool reloadShaders = false;
+float directMultiplier = 1.0;
 HRCameraRef  camRef;
 HRRenderRef  renderRef;
 
@@ -285,6 +286,8 @@ static void key(GLFWwindow* window, int k, int s, int action, int mods)
 
   case GLFW_KEY_PRINT_SCREEN:
     screenShot = true;
+  case GLFW_KEY_L:
+    directMultiplier = 1.0f - directMultiplier;
 
   default:
     return;

@@ -64,6 +64,7 @@ const bool enableValidationLayers = true;
 extern bool screenShot;
 extern bool screenshotAndExit;
 extern bool reloadShaders;
+extern float directMultiplier;
 
 struct Vertex {
   float3 pos;
@@ -1551,6 +1552,7 @@ void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
 
   vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, resolvePipeline);
   vkCmdPushConstants(commandBuffers[current_image], resolvePipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float4x4), &lighttm);
+  vkCmdPushConstants(commandBuffers[current_image], resolvePipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(float4x4), sizeof(float), &directMultiplier);
   vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, resolvePipelineLayout, 0, 1, &resolveDescriptorSets, 0, nullptr);
   vkCmdDraw(commandBuffers[current_image], 3, 1, 0, 0);
 
@@ -1797,6 +1799,7 @@ void RD_Vulkan::createPipelines() {
   resolveConfig.width = swapChainExtent.width;
   resolveConfig.height = swapChainExtent.height;
   resolveConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float4x4) });
+  resolveConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(float4x4), sizeof(float4) });
   resolvePipeline = createGraphicsPipeline(resolveConfig, resolvePipelineLayout);
 
   PipelineConfig postprocessConfig;
