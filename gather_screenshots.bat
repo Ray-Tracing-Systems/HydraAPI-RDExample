@@ -1,19 +1,37 @@
-x64\Release\main.exe -voxelSize 0.5 -p -scene 01_CornellBoxEmpty
-x64\Release\main.exe -voxelSize 0.25 -p -scene 01_CornellBoxEmpty
-x64\Release\main.exe -voxelSize 0.125 -p -scene 01_CornellBoxEmpty
-x64\Release\main.exe -voxelSize 0.0625 -p -scene 01_CornellBoxEmpty
-x64\Release\main.exe -voxelSize 0.5 -p -scene 02_CornellBoxWithPrim
-x64\Release\main.exe -voxelSize 0.25 -p -scene 02_CornellBoxWithPrim
-x64\Release\main.exe -voxelSize 0.125 -p -scene 02_CornellBoxWithPrim
-x64\Release\main.exe -voxelSize 0.0625 -p -scene 02_CornellBoxWithPrim
-x64\Release\main.exe -voxelSize 0.5 -p -scene 03_CornellBoxWithComplexShape
-x64\Release\main.exe -voxelSize 0.25 -p -scene 03_CornellBoxWithComplexShape
-x64\Release\main.exe -voxelSize 0.125 -p -scene 03_CornellBoxWithComplexShape
-x64\Release\main.exe -voxelSize 0.0625 -p -scene 03_CornellBoxWithComplexShape
-x64\Release\main.exe -voxelSize 0.5 -p -scene SimpleInterior_500tris
-x64\Release\main.exe -voxelSize 0.25 -p -scene SimpleInterior_500tris
-x64\Release\main.exe -voxelSize 0.125 -p -scene SimpleInterior_500tris
-x64\Release\main.exe -voxelSize 0.5 -p -scene SimpleInterior_5K
-x64\Release\main.exe -voxelSize 0.25 -p -scene SimpleInterior_5K
-x64\Release\main.exe -voxelSize 0.125 -p -scene SimpleInterior_5K
-x64\Release\main.exe -voxelSize 0.5 -p -scene test_42
+rem x64\Release\main.exe -voxelSize 0.5 -p -scene 01_CornellBoxEmpty
+rem x64\Release\main.exe -voxelSize 0.25 -p -scene 01_CornellBoxEmpty
+rem x64\Release\main.exe -voxelSize 0.125 -p -scene 01_CornellBoxEmpty
+rem x64\Release\main.exe -voxelSize 0.0625 -p -scene 01_CornellBoxEmpty
+rem x64\Release\main.exe -voxelSize 0.5 -p -scene 02_CornellBoxWithPrim
+rem x64\Release\main.exe -voxelSize 0.25 -p -scene 02_CornellBoxWithPrim
+rem x64\Release\main.exe -voxelSize 0.125 -p -scene 02_CornellBoxWithPrim
+rem x64\Release\main.exe -voxelSize 0.0625 -p -scene 02_CornellBoxWithPrim
+rem x64\Release\main.exe -voxelSize 0.5 -p -scene 03_CornellBoxWithComplexShape
+rem x64\Release\main.exe -voxelSize 0.25 -p -scene 03_CornellBoxWithComplexShape
+rem x64\Release\main.exe -voxelSize 0.125 -p -scene 03_CornellBoxWithComplexShape
+rem x64\Release\main.exe -voxelSize 0.0625 -p -scene 03_CornellBoxWithComplexShape
+rem x64\Release\main.exe -voxelSize 0.5 -p -scene SimpleInterior_500tris
+rem x64\Release\main.exe -voxelSize 0.25 -p -scene SimpleInterior_500tris
+rem x64\Release\main.exe -voxelSize 0.125 -p -scene SimpleInterior_500tris
+rem x64\Release\main.exe -voxelSize 0.5 -p -scene SimpleInterior_5K
+rem x64\Release\main.exe -voxelSize 0.25 -p -scene SimpleInterior_5K
+rem x64\Release\main.exe -voxelSize 0.125 -p -scene SimpleInterior_5K
+rem x64\Release\main.exe -voxelSize 0.5 -p -scene test_42
+x64\Release\main.exe -voxelSize 0.5 -p -scene 01_CornellBoxEmpty_direct -e
+x64\Release\main.exe -voxelSize 0.25 -p -scene 01_CornellBoxEmpty_direct -e
+x64\Release\main.exe -voxelSize 0.125 -p -scene 01_CornellBoxEmpty_direct -e
+x64\Release\main.exe -voxelSize 0.0625 -p -scene 01_CornellBoxEmpty_direct -e
+x64\Release\main.exe -voxelSize 0.5 -p -scene 02_CornellBoxWithPrim_direct -e
+x64\Release\main.exe -voxelSize 0.25 -p -scene 02_CornellBoxWithPrim_direct -e
+x64\Release\main.exe -voxelSize 0.125 -p -scene 02_CornellBoxWithPrim_direct -e
+x64\Release\main.exe -voxelSize 0.0625 -p -scene 02_CornellBoxWithPrim_direct -e
+x64\Release\main.exe -voxelSize 0.5 -p -scene 03_CornellBoxWithComplexShape_direct -e
+x64\Release\main.exe -voxelSize 0.25 -p -scene 03_CornellBoxWithComplexShape_direct -e
+x64\Release\main.exe -voxelSize 0.125 -p -scene 03_CornellBoxWithComplexShape_direct -e
+x64\Release\main.exe -voxelSize 0.0625 -p -scene 03_CornellBoxWithComplexShape_direct -e
+x64\Release\main.exe -voxelSize 0.5 -p -scene SimpleInterior_500tris_direct -e
+x64\Release\main.exe -voxelSize 0.25 -p -scene SimpleInterior_500tris_direct -e
+x64\Release\main.exe -voxelSize 0.125 -p -scene SimpleInterior_500tris_direct -e
+x64\Release\main.exe -voxelSize 0.5 -p -scene SimpleInterior_5K_direct -e
+x64\Release\main.exe -voxelSize 0.25 -p -scene SimpleInterior_5K_direct -e
+x64\Release\main.exe -voxelSize 0.125 -p -scene SimpleInterior_5K_direct -e
