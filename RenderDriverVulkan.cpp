@@ -758,7 +758,7 @@ static VkImageAspectFlags get_aspect_bits(VkImageLayout target_layout, VkFormat 
   }
 }
 
-void RD_Vulkan::BufferManager::transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels) {
+void RD_Vulkan::BufferManager::transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout, uint32_t mipLevels, uint32_t layers_count) {
   SingleTimeCommandsContext context;
 
   VkImageMemoryBarrier barrier = {};
@@ -772,7 +772,7 @@ void RD_Vulkan::BufferManager::transitionImageLayout(VkImage image, VkFormat for
   barrier.subresourceRange.baseMipLevel = 0;
   barrier.subresourceRange.levelCount = mipLevels;
   barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount = 1;
+  barrier.subresourceRange.layerCount = layers_count;
   barrier.srcAccessMask = 0; // TODO
   barrier.dstAccessMask = 0; // TODO
 
@@ -1144,16 +1144,17 @@ void RD_Vulkan::createImageViews() {
 }
 
 void RD_Vulkan::createFramebuffers() {
-  {
+  shadowMapFramebuffers.resize(MAX_LIGHTS);
+  for (uint32_t i = 0; i < shadowMapFramebuffers.size(); ++i) {
     VkFramebufferCreateInfo framebufferCreateInfo = {};
     framebufferCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     framebufferCreateInfo.attachmentCount = 1;
-    framebufferCreateInfo.pAttachments = &shadowMapImageView;
+    framebufferCreateInfo.pAttachments = &shadowMapImageLayerViews[i];
     framebufferCreateInfo.width = SHADOW_MAP_RESOLUTION;
     framebufferCreateInfo.height = SHADOW_MAP_RESOLUTION;
     framebufferCreateInfo.layers = 1;
     framebufferCreateInfo.renderPass = shadowMapRenderPass;
-    VK_CHECK_RESULT(vkCreateFramebuffer(device, &framebufferCreateInfo, nullptr, &shadowMapFramebuffer));
+    VK_CHECK_RESULT(vkCreateFramebuffer(device, &framebufferCreateInfo, nullptr, &shadowMapFramebuffers[i]));
   }
 
   std::array<VkImageView, 3> attachments = {
@@ -1244,6 +1245,39 @@ void RD_Vulkan::BufferManager::createImage(uint32_t width, uint32_t height, uint
   vkBindImageMemory(deviceRef, image, imageMemory, 0);
 }
 
+void RD_Vulkan::BufferManager::createTextureArray(uint32_t width, uint32_t height, uint32_t mip_levels, uint32_t layers_count,
+  VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage,
+  VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory)
+{
+  VkImageCreateInfo imageInfo = {};
+  imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageInfo.extent.width = width;
+  imageInfo.extent.height = height;
+  imageInfo.extent.depth = 1;
+  imageInfo.mipLevels = mip_levels;
+  imageInfo.arrayLayers = layers_count;
+  imageInfo.format = format;
+  imageInfo.tiling = tiling;
+  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  imageInfo.usage = usage;
+  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageInfo.flags = 0; // Optional
+  VK_CHECK_RESULT(vkCreateImage(deviceRef, &imageInfo, nullptr, &image));
+
+  VkMemoryRequirements memRequirements;
+  vkGetImageMemoryRequirements(deviceRef, image, &memRequirements);
+
+  VkMemoryAllocateInfo allocInfo = {};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = findMemoryType(physicalDeviceRef, memRequirements.memoryTypeBits, properties);
+  VK_CHECK_RESULT(vkAllocateMemory(deviceRef, &allocInfo, nullptr, &imageMemory));
+
+  vkBindImageMemory(deviceRef, image, imageMemory, 0);
+}
+
 VkCommandBuffer RD_Vulkan::BufferManager::beginSingleTimeCommands() {
   VkCommandBufferAllocateInfo allocInfo = {};
   allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1296,7 +1330,7 @@ void RD_Vulkan::Texture::createTextureImage(uint32_t width, uint32_t height, con
     VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage, textureImageMemory);
 
-  BufferManager::get().transitionImageLayout(textureImage, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels);
+  BufferManager::get().transitionImageLayout(textureImage, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mipLevels, 1);
   BufferManager::get().copyBufferToImage(stagingBuffer, textureImage, width, height);
   BufferManager::get().generateMipmaps(textureImage, format, width, height, mipLevels);
 
@@ -1422,6 +1456,24 @@ VkImageView RD_Vulkan::BufferManager::createImageView(VkImage image, VkFormat fo
   return imageView;
 }
 
+VkImageView RD_Vulkan::BufferManager::createTextureArrayView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels, uint32_t base_layer, uint32_t layers_count) {
+  VkImageViewCreateInfo viewInfo = {};
+  viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  viewInfo.image = image;
+  viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+  viewInfo.format = format;
+  viewInfo.subresourceRange.aspectMask = aspectFlags;
+  viewInfo.subresourceRange.baseMipLevel = 0;
+  viewInfo.subresourceRange.levelCount = mipLevels;
+  viewInfo.subresourceRange.baseArrayLayer = base_layer;
+  viewInfo.subresourceRange.layerCount = layers_count;
+
+  VkImageView imageView;
+  VK_CHECK_RESULT(vkCreateImageView(deviceRef, &viewInfo, nullptr, &imageView));
+
+  return imageView;
+}
+
 void RD_Vulkan::Texture::createTextureImageView(VkFormat format) {
   textureImageView = BufferManager::get().createImageView(textureImage, format, VK_IMAGE_ASPECT_COLOR_BIT, mipLevels);
 }
@@ -1446,12 +1498,15 @@ void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
   VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffers[current_image], &beginInfo));
 
   VkDeviceSize zeroOffset = 0;
-  if (hasDirectLight || hasSpotLight)
+  const uint32_t directLightsCount = static_cast<uint32_t>(directLights.size());
+  const uint32_t spotLightsCount = static_cast<uint32_t>(spotLights.size());
+
+  for (uint32_t i = 0; i < lightsTM.size(); ++i)
   {
     VkRenderPassBeginInfo shadowMapRenderPassBeginInfo = {};
     shadowMapRenderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     shadowMapRenderPassBeginInfo.renderPass = shadowMapRenderPass;
-    shadowMapRenderPassBeginInfo.framebuffer = shadowMapFramebuffer;
+    shadowMapRenderPassBeginInfo.framebuffer = shadowMapFramebuffers[i];
     shadowMapRenderPassBeginInfo.renderArea.offset = { 0, 0 };
     shadowMapRenderPassBeginInfo.renderArea.extent = VkExtent2D{ SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION };
     VkClearValue shadowMapClearValues = {};
@@ -1464,7 +1519,7 @@ void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
 
     vkCmdBindVertexBuffers(commandBuffers[current_image], 0, 1, &globalVertexBuffer, &zeroOffset);
     vkCmdBindIndexBuffer(commandBuffers[current_image], globalIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
-    vkCmdPushConstants(commandBuffers[current_image], shadowMapPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4), &lighttm);
+    vkCmdPushConstants(commandBuffers[current_image], shadowMapPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float4x4), &lightsTM[i]);
     for (auto& modelInstance : modelInstances) {
       for (auto& subMeshes : modelInstance.parts) {
         vkCmdPushConstants(commandBuffers[current_image], shadowMapPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(float4x4), sizeof(float4), &materials[subMeshes.mesh.materialId].color);
@@ -1474,10 +1529,13 @@ void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
     }
 
     vkCmdEndRenderPass(commandBuffers[current_image]);
+  }
 
+  if (!lightsTM.empty()) {
     vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_COMPUTE, initialLightingPipeline);
 
-    vkCmdPushConstants(commandBuffers[current_image], initialLightingPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float4x4), &lighttm);
+    vkCmdPushConstants(commandBuffers[current_image], initialLightingPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(directLightsCount), &directLightsCount);
+    vkCmdPushConstants(commandBuffers[current_image], initialLightingPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, sizeof(directLightsCount), sizeof(spotLightsCount), &spotLightsCount);
     vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_COMPUTE, initialLightingPipelineLayout, 0, 1, &initialLightingDs, 0, nullptr);
     vkCmdDispatch(commandBuffers[current_image], (gridSize.x + 3) / 4, (gridSize.x + 3) / 4, (gridSize.x + 3) / 4);
 
@@ -1551,8 +1609,9 @@ void RD_Vulkan::prepareCommandBuffers(uint32_t current_image) {
   vkCmdBeginRenderPass(commandBuffers[current_image], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
   vkCmdBindPipeline(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, resolvePipeline);
-  vkCmdPushConstants(commandBuffers[current_image], resolvePipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float4x4), &lighttm);
-  vkCmdPushConstants(commandBuffers[current_image], resolvePipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(float4x4), sizeof(float), &directMultiplier);
+  vkCmdPushConstants(commandBuffers[current_image], resolvePipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float), &directMultiplier);
+  vkCmdPushConstants(commandBuffers[current_image], resolvePipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(directMultiplier), sizeof(directLightsCount), &directLightsCount);
+  vkCmdPushConstants(commandBuffers[current_image], resolvePipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(directMultiplier) + sizeof(directLightsCount), sizeof(spotLightsCount), &spotLightsCount);
   vkCmdBindDescriptorSets(commandBuffers[current_image], VK_PIPELINE_BIND_POINT_GRAPHICS, resolvePipelineLayout, 0, 1, &resolveDescriptorSets, 0, nullptr);
   vkCmdDraw(commandBuffers[current_image], 3, 1, 0, 0);
 
@@ -1710,7 +1769,10 @@ void RD_Vulkan::cleanupSwapChain() {
   vkDestroyImage(device, depthImage, nullptr);
   vkFreeMemory(device, depthImageMemory, nullptr);
 
-  vkDestroyImageView(device, shadowMapImageView, nullptr);
+  vkDestroyImageView(device, shadowMapImageArrayView, nullptr);
+  for (auto& view : shadowMapImageLayerViews) {
+    vkDestroyImageView(device, view, nullptr);
+  }
   vkDestroyImage(device, shadowMapImage, nullptr);
   vkFreeMemory(device, shadowMapImageMemory, nullptr);
 
@@ -1743,7 +1805,9 @@ void RD_Vulkan::cleanupSwapChain() {
   vkDestroyDescriptorPool(device, lightBounceDescriptorPool, nullptr);
   vkDestroyDescriptorPool(device, nextBounceDescriptorPool, nullptr);
 
-  vkDestroyFramebuffer(device, shadowMapFramebuffer, nullptr);
+  for (auto& framebuffer : shadowMapFramebuffers) {
+    vkDestroyFramebuffer(device, framebuffer, nullptr);
+  }
   vkDestroyFramebuffer(device, gbufferFramebuffer, nullptr);
   vkDestroyFramebuffer(device, resolveFramebuffer, nullptr);
 
@@ -1798,8 +1862,7 @@ void RD_Vulkan::createPipelines() {
   resolveConfig.descriptorSetLayout = resolveDescriptorSetLayout;
   resolveConfig.width = swapChainExtent.width;
   resolveConfig.height = swapChainExtent.height;
-  resolveConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float4x4) });
-  resolveConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(float4x4), sizeof(float4) });
+  resolveConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float4) });
   resolvePipeline = createGraphicsPipeline(resolveConfig, resolvePipelineLayout);
 
   PipelineConfig postprocessConfig;
@@ -1824,7 +1887,7 @@ void RD_Vulkan::createPipelines() {
   debugPointsPipeline = createGraphicsPipeline(debugPointsConfig, debugPointsPipelineLayout);
 
   ComputePipelineConfig initialLightingConfig;
-  initialLightingConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(float4x4) });
+  initialLightingConfig.pushConstants.emplace_back(VkPushConstantRange{ VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint2) });
   initialLightingConfig.shaderPath = "shaders/initialLighting.spv";
   initialLightingConfig.descriptorSetLayout = initialLightingDescriptorSetLayout;
   initialLightingPipeline = createComputePipeline(initialLightingConfig, initialLightingPipelineLayout);
@@ -1959,7 +2022,7 @@ void RD_Vulkan::createDescriptorSets() {
     std::array<VkDescriptorBufferInfo, 2> buffersInfo;
     buffersInfo[0].buffer = lightsBuffer;
     buffersInfo[0].offset = 0;
-    buffersInfo[0].range = sizeof(DirectLight) + sizeof(SpotLight);
+    buffersInfo[0].range = sizeof(DirectLight) * MAX_DIRECT_LIGHTS + sizeof(SpotLight) * MAX_SPOT_LIGHTS + sizeof(float4x4) * MAX_LIGHTS;
 
     buffersInfo[1].buffer = resolveConstants;
     buffersInfo[1].offset = 0;
@@ -2010,7 +2073,7 @@ void RD_Vulkan::createDescriptorSets() {
 
     VkDescriptorImageInfo shadowMapImageInfo = {};
     shadowMapImageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-    shadowMapImageInfo.imageView = shadowMapImageView;
+    shadowMapImageInfo.imageView = shadowMapImageArrayView;
     shadowMapImageInfo.sampler = shadowMapImageSampler;
 
     std::array<VkDescriptorImageInfo, 4> imagesInfo = { colorImageInfo, normalImageInfo, depthImageInfo, shadowMapImageInfo };
@@ -2136,13 +2199,17 @@ void RD_Vulkan::createDepthResources() {
     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, depthImage, depthImageMemory);
   depthImageView = BufferManager::get().createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
 
-  BufferManager::get().transitionImageLayout(depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 1);
+  BufferManager::get().transitionImageLayout(depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 1, 1);
 
-  BufferManager::get().createImage(SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 1, depthFormat, VK_IMAGE_TILING_OPTIMAL,
+  BufferManager::get().createTextureArray(SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION, 1, MAX_LIGHTS, depthFormat, VK_IMAGE_TILING_OPTIMAL,
     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, shadowMapImage, shadowMapImageMemory);
-  shadowMapImageView = BufferManager::get().createImageView(shadowMapImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
+  shadowMapImageArrayView = BufferManager::get().createTextureArrayView(shadowMapImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1, 0, MAX_LIGHTS);
+  shadowMapImageLayerViews.resize(MAX_LIGHTS);
+  for (uint32_t i = 0; i < shadowMapImageLayerViews.size(); ++i) {
+    shadowMapImageLayerViews[i] = BufferManager::get().createTextureArrayView(shadowMapImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1, i, 1);
+  }
 
-  BufferManager::get().transitionImageLayout(shadowMapImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 1);
+  BufferManager::get().transitionImageLayout(shadowMapImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL, 1, MAX_LIGHTS);
 }
 
 static uint32_t log2i(uint32_t val) {
@@ -2162,27 +2229,27 @@ void RD_Vulkan::createColorResources() {
     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, colorImage, colorImageMemory);
   colorImageView = BufferManager::get().createImageView(colorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 
-  BufferManager::get().transitionImageLayout(colorImage, colorFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
+  BufferManager::get().transitionImageLayout(colorImage, colorFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 1);
 
   VkFormat normalFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
   BufferManager::get().createImage(swapChainExtent.width, swapChainExtent.height, 1, normalFormat, VK_IMAGE_TILING_OPTIMAL,
     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, normalImage, normalImageMemory);
   normalImageView = BufferManager::get().createImageView(normalImage, normalFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 
-  BufferManager::get().transitionImageLayout(normalImage, normalFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
+  BufferManager::get().transitionImageLayout(normalImage, normalFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 1);
 
   VkFormat frameFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
   BufferManager::get().createImage(swapChainExtent.width, swapChainExtent.height, 1, frameFormat, VK_IMAGE_TILING_OPTIMAL,
     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, frameImage, frameImageMemory);
   frameImageView = BufferManager::get().createImageView(frameImage, frameFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 
-  BufferManager::get().transitionImageLayout(frameImage, frameFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1);
+  BufferManager::get().transitionImageLayout(frameImage, frameFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 1, 1);
 
   BufferManager::get().createImage(swapChainExtent.width, swapChainExtent.height, screenMipLevels, frameFormat, VK_IMAGE_TILING_OPTIMAL,
     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, frameMipchainImage, frameMipchainImageMemory);
   frameMipchainImageView = BufferManager::get().createImageView(frameMipchainImage, frameFormat, VK_IMAGE_ASPECT_COLOR_BIT, screenMipLevels);
 
-  BufferManager::get().transitionImageLayout(frameMipchainImage, frameFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, screenMipLevels);
+  BufferManager::get().transitionImageLayout(frameMipchainImage, frameFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, screenMipLevels, 1);
 
   createColorSampler();
 }
@@ -2468,6 +2535,12 @@ RD_Vulkan::~RD_Vulkan()
 
   vkDestroyBuffer(device, colorsBuffer, nullptr);
   vkFreeMemory(device, colorsMemory, nullptr);
+
+  vkDestroyBuffer(device, idxToVoxelIdBuffer, nullptr);
+  vkFreeMemory(device, idxToVoxelIdMemory, nullptr);
+
+  vkDestroyBuffer(device, voxelIdToIdxBuffer, nullptr);
+  vkFreeMemory(device, voxelIdToIdxMemory, nullptr);
 
   for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
     vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -2794,8 +2867,10 @@ void RD_Vulkan::BeginScene(pugi::xml_node a_sceneNode)
 }
 
 void RD_Vulkan::createBuffers() {
-  BufferManager::get().createBuffer(sizeof(directLights[0]) + sizeof(spotLights[0]), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightsBuffer, lightsBufferMemory);
-  BufferManager::get().createBuffer(sizeof(float4) * (4 + 4), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, resolveConstants, resolveConstantsMemory);
+  BufferManager::get().createBuffer(
+    sizeof(DirectLight) * MAX_DIRECT_LIGHTS + sizeof(SpotLight) * MAX_SPOT_LIGHTS + sizeof(lightsTM[0]) * MAX_LIGHTS,
+    VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightsBuffer, lightsBufferMemory);
+  BufferManager::get().createBuffer(sizeof(float4x4) * (4 + 4), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, resolveConstants, resolveConstantsMemory);
 }
 
 void RD_Vulkan::EndScene()
@@ -2809,20 +2884,19 @@ void RD_Vulkan::EndScene()
   }
   inited = true;
   void* data;
-  if (hasDirectLight)
-  {
+  if (!directLights.empty()) {
     vkMapMemory(device, lightsBufferMemory, 0, directLights.size() * sizeof(directLights[0]), 0, &data);
     memcpy(data, directLights.data(), directLights.size() * sizeof(directLights[0]));
     vkUnmapMemory(device, lightsBufferMemory);
-  } else {
-    vkMapMemory(device, lightsBufferMemory, 0, sizeof(directLights[0]), 0, &data);
-    memset(data, ~0, sizeof(DirectLight));
+  }
+  if (!spotLights.empty()) {
+    vkMapMemory(device, lightsBufferMemory, sizeof(directLights[0]) * MAX_DIRECT_LIGHTS, spotLights.size() * sizeof(spotLights[0]), 0, &data);
+    memcpy(data, spotLights.data(), spotLights.size() * sizeof(spotLights[0]));
     vkUnmapMemory(device, lightsBufferMemory);
   }
-  if (hasSpotLight)
-  {
-    vkMapMemory(device, lightsBufferMemory, sizeof(directLights[0]), spotLights.size() * sizeof(spotLights[0]), 0, &data);
-    memcpy(data, spotLights.data(), spotLights.size() * sizeof(spotLights[0]));
+  if (!lightsTM.empty()) {
+    vkMapMemory(device, lightsBufferMemory, sizeof(directLights[0]) * MAX_DIRECT_LIGHTS + sizeof(spotLights[0]) * MAX_SPOT_LIGHTS, lightsTM.size() * sizeof(lightsTM[0]), 0, &data);
+    memcpy(data, lightsTM.data(), lightsTM.size() * sizeof(lightsTM[0]));
     vkUnmapMemory(device, lightsBufferMemory);
   }
 
@@ -3027,7 +3101,7 @@ void RD_Vulkan::EndScene()
 
     VkDescriptorImageInfo shadowMapImageInfo = {};
     shadowMapImageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
-    shadowMapImageInfo.imageView = shadowMapImageView;
+    shadowMapImageInfo.imageView = shadowMapImageArrayView;
     shadowMapImageInfo.sampler = shadowMapImageSampler;
 
     descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -3258,18 +3332,25 @@ void RD_Vulkan::updateUniformBuffer(uint32_t current_image) {
   data = reinterpret_cast<uint8_t*>(data) + sizeof(averageLighting);
   vkUnmapMemory(device, resolveConstantsMemory);
 
-  if (hasDirectLight) {
-    float4x4 pr = orthographic_projection_matrix(-directLights[0].outerRadius, directLights[0].outerRadius, -directLights[0].outerRadius, directLights[0].outerRadius, 0.1f, 200.0f);
-    float4x4 view = lookAtTransposed(directLights[0].position, directLights[0].direction + directLights[0].position, float3(0, 1, 0));
+  for (const auto& light : directLights) {
+    float4x4 pr = orthographic_projection_matrix(-light.outerRadius, light.outerRadius, -light.outerRadius, light.outerRadius, 0.1f, 200.0f);
+    float4x4 view = lookAtTransposed(light.position, light.direction + light.position, float3(0, 1, 0));
 
-    lighttm = mul(view, pr);
-  } else if (hasSpotLight) {
-    const float4x4 view = lookAtTransposed(spotLights[0].position, spotLights[0].position + spotLights[0].direction, float3(1, 0, 0));
+    lightsTM[light.id] = mul(view, pr);
+  }
+  for (const auto& light : spotLights) {
+    const float4x4 view = lookAtTransposed(light.position, light.position + light.direction, float3(1, 0, 0));
     const float aspect = 1.0f;
-    float4x4 proj = projectionMatrixTransposed((std::acos(spotLights[0].outerCos) * 180.0f / PI + 1.0f) * 2.0f, aspect, 0.0001f, 100.0f);
+    float4x4 proj = projectionMatrixTransposed((std::acos(light.outerCos) * 180.0f / PI + 1.0f) * 2.0f, aspect, 0.0001f, 100.0f);
     proj.M(1, 1) *= -1.f;
 
-    lighttm = mul(view, proj);
+    lightsTM[light.id] = mul(view, proj);
+  }
+
+  if (!lightsTM.empty()) {
+    vkMapMemory(device, lightsBufferMemory, sizeof(directLights[0]) * MAX_DIRECT_LIGHTS + sizeof(spotLights[0]) * MAX_SPOT_LIGHTS, lightsTM.size() * sizeof(lightsTM[0]), 0, &data);
+    memcpy(data, lightsTM.data(), lightsTM.size() * sizeof(lightsTM[0]));
+    vkUnmapMemory(device, lightsBufferMemory);
   }
 }
 
@@ -3327,7 +3408,7 @@ void RD_Vulkan::InstanceLights(int32_t, const float* a_matrix, pugi::xml_node* a
 
   int lightId = a_custAttrArray->attribute(L"light_id").as_int();
   if (directLightLib.count(lightId)) {
-    for (int32_t i = 0; i < a_instNum; ++i) {
+    for (int32_t i = 0; i < a_instNum && directLights.size() < MAX_DIRECT_LIGHTS; ++i) {
       DirectLight lightToAdd;
       lightToAdd.color = directLightLib[lightId].color;
       lightToAdd.innerRadius = directLightLib[lightId].innerRadius;
@@ -3336,12 +3417,12 @@ void RD_Vulkan::InstanceLights(int32_t, const float* a_matrix, pugi::xml_node* a
       matrix = transpose(matrix);
       lightToAdd.direction = -to_float3(matrix.row[1]);
       lightToAdd.position = to_float3(matrix.row[3]);
-      lightToAdd.padding = 0;
+      lightToAdd.id = static_cast<uint32_t>(lightsTM.size());
       directLights.push_back(lightToAdd);
+      lightsTM.resize(lightsTM.size() + 1);
     }
-    hasDirectLight = true;
   } else if (spotLightLib.count(lightId)) {
-    for (int32_t i = 0; i < a_instNum; ++i) {
+    for (int32_t i = 0; i < a_instNum && spotLights.size() < MAX_SPOT_LIGHTS; ++i) {
       SpotLight lightToAdd;
       lightToAdd.color = spotLightLib[lightId].color;
       lightToAdd.innerCos = spotLightLib[lightId].innerCos;
@@ -3350,9 +3431,10 @@ void RD_Vulkan::InstanceLights(int32_t, const float* a_matrix, pugi::xml_node* a
       matrix = transpose(matrix);
       lightToAdd.direction = -to_float3(matrix.row[1]);
       lightToAdd.position = to_float3(matrix.row[3]);
+      lightToAdd.id = static_cast<uint32_t>(lightsTM.size());
       spotLights.push_back(lightToAdd);
+      lightsTM.resize(lightsTM.size() + 1);
     }
-    hasSpotLight = true;
   }
 }
 
@@ -3387,10 +3469,14 @@ void RD_Vulkan::destroyPipelines() {
   vkDestroyPipeline(device, postprocessPipeline, nullptr);
   vkDestroyPipeline(device, debugPointsPipeline, nullptr);
   vkDestroyPipeline(device, initialLightingPipeline, nullptr);
+  vkDestroyPipeline(device, lightBouncePipeline, nullptr);
+  vkDestroyPipeline(device, nextBouncePipeline, nullptr);
   vkDestroyPipelineLayout(device, shadowMapPipelineLayout, nullptr);
   vkDestroyPipelineLayout(device, gbufferPipelineLayout, nullptr);
   vkDestroyPipelineLayout(device, resolvePipelineLayout, nullptr);
   vkDestroyPipelineLayout(device, postprocessPipelineLayout, nullptr);
   vkDestroyPipelineLayout(device, debugPointsPipelineLayout, nullptr);
   vkDestroyPipelineLayout(device, initialLightingPipelineLayout, nullptr);
+  vkDestroyPipelineLayout(device, lightBouncePipelineLayout, nullptr);
+  vkDestroyPipelineLayout(device, nextBouncePipelineLayout, nullptr);
 }
