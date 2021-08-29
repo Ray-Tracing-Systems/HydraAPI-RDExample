@@ -8,6 +8,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include <cassert>
+
 #include <array>
 #include <map>
 #include <memory>
@@ -28,6 +30,17 @@ using HydraLiteMath::float3;
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#define VK_CHECK_RESULT(f) 													\
+{																										\
+    VkResult res = (f);															\
+    if (res != VK_SUCCESS)													\
+    {																								\
+        printf("Fatal : VkResult is %d in %s at line %d\n", res,  __FILE__, __LINE__); \
+        assert(res == VK_SUCCESS);									\
+    }																								\
+}
+
 
 struct Vertex;
 class UniformBufferObject {
@@ -137,19 +150,16 @@ protected:
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
     VkImageView textureImageView;
-    VkSampler textureSampler;
     uint32_t mipLevels;
 
     template<typename T>
     void createTextureImage(uint32_t width, uint32_t height, const T* image, VkFormat format);
     void createTextureImageView(VkFormat format);
-    void createTextureSampler();
   public:
     template<typename T>
     Texture(VkDevice dev, uint32_t width, uint32_t height, const T* image) : deviceRef(dev) {
       createTextureImage(width, height, image, VkFormat(TypeToFormat<T>::format));
       createTextureImageView(VkFormat(TypeToFormat<T>::format));
-      createTextureSampler();
     }
 
     ~Texture();
@@ -291,7 +301,6 @@ protected:
   void createDefaultTexture();
   void createDepthResources();
   void createColorResources();
-  void createColorSampler();
   void createBuffers();
   void createLightingBuffer();
   VkFormat findDepthFormat();
@@ -383,33 +392,27 @@ protected:
   VkImage depthImage;
   VkDeviceMemory depthImageMemory;
   VkImageView depthImageView;
-  VkSampler depthImageSampler;
 
   VkImage colorImage;
   VkDeviceMemory colorImageMemory;
   VkImageView colorImageView;
-  VkSampler colorImageSampler;
 
   VkImage normalImage;
   VkDeviceMemory normalImageMemory;
   VkImageView normalImageView;
-  VkSampler normalImageSampler;
 
   VkImage frameImage;
   VkDeviceMemory frameImageMemory;
   VkImageView frameImageView;
-  VkSampler frameImageSampler;
 
   VkImage frameMipchainImage;
   VkDeviceMemory frameMipchainImageMemory;
   VkImageView frameMipchainImageView;
-  VkSampler frameMipchainImageSampler;
 
   VkImage shadowMapImage;
   VkDeviceMemory shadowMapImageMemory;
   VkImageView shadowMapImageArrayView;
   std::vector<VkImageView> shadowMapImageLayerViews;
-  VkSampler shadowMapImageSampler;
   const uint32_t SHADOW_MAP_RESOLUTION = 4096;
 
   VkDescriptorPool resolveDescriptorPool = {};
@@ -500,4 +503,23 @@ protected:
   VkBuffer screenshotBuffer = {};
   VkDeviceMemory screenshotBufferMemory = {};
   uint32_t screenshotFrameIdx;
+
+  using SamplerDescription = float; // Currently it is amount of mip levels, to be changed in future.
+  class Core {
+    std::unordered_map<SamplerDescription, VkSampler> samplers;
+    VkDevice device;
+  public:
+    void init(VkDevice device_) {
+      device = device_;
+    }
+
+    void close();
+
+    VkSampler requestSampler(const SamplerDescription& desc);
+
+    static Core& get() {
+      static Core core;
+      return core;
+    }
+  };
 };

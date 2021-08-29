@@ -201,6 +201,7 @@
     <ClCompile Include="input.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="mesh_utils.cpp" />
+    <ClCompile Include="RDVulkan_core.cpp" />
     <ClCompile Include="RenderDriverFormFactorIntegrator.cpp" />
     <ClCompile Include="RenderDriverOpenGL1.cpp" />
     <ClCompile Include="RenderDriverOpenGL1Debug.cpp" />
