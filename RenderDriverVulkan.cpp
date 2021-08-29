@@ -34,16 +34,6 @@ IHRRenderDriver* CreateVulkan_RenderDriver()
   return new RD_Vulkan;
 }
 
-#define VK_CHECK_RESULT(f) 													\
-{																										\
-    VkResult res = (f);															\
-    if (res != VK_SUCCESS)													\
-    {																								\
-        printf("Fatal : VkResult is %d in %s at line %d\n", res,  __FILE__, __LINE__); \
-        assert(res == VK_SUCCESS);									\
-    }																								\
-}
-
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
@@ -169,6 +159,7 @@ void RD_Vulkan::createLogicalDevice()
   VK_CHECK_RESULT(vkCreateDevice(physicalDevice, &createInfo, NULL, &device));
 
   vkGetDeviceQueue(device, GetQueueFamilyIndex().graphicsFamily, 0, &graphicsQueue);
+  Core::get().init(device);
 }
 
 struct SwapChainSupportDetails {
@@ -1699,13 +1690,6 @@ void RD_Vulkan::cleanupSwapChain() {
   vkDestroyImage(device, frameMipchainImage, nullptr);
   vkFreeMemory(device, frameMipchainImageMemory, nullptr);
 
-  vkDestroySampler(device, colorImageSampler, nullptr);
-  vkDestroySampler(device, normalImageSampler, nullptr);
-  vkDestroySampler(device, depthImageSampler, nullptr);
-  vkDestroySampler(device, shadowMapImageSampler, nullptr);
-  vkDestroySampler(device, frameImageSampler, nullptr);
-  vkDestroySampler(device, frameMipchainImageSampler, nullptr);
-
   vkDestroyBuffer(device, resolveConstants, nullptr);
   vkFreeMemory(device, resolveConstantsMemory, nullptr);
 
@@ -1905,22 +1889,22 @@ void RD_Vulkan::createDescriptorSets() {
     VkDescriptorImageInfo colorImageInfo = {};
     colorImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     colorImageInfo.imageView = colorImageView;
-    colorImageInfo.sampler = colorImageSampler;
+    colorImageInfo.sampler = Core::get().requestSampler(1);
 
     VkDescriptorImageInfo normalImageInfo = {};
     normalImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     normalImageInfo.imageView = normalImageView;
-    normalImageInfo.sampler = normalImageSampler;
+    normalImageInfo.sampler = Core::get().requestSampler(1);
 
     VkDescriptorImageInfo depthImageInfo = {};
     depthImageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     depthImageInfo.imageView = depthImageView;
-    depthImageInfo.sampler = depthImageSampler;
+    depthImageInfo.sampler = Core::get().requestSampler(1);
 
     VkDescriptorImageInfo shadowMapImageInfo = {};
     shadowMapImageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
     shadowMapImageInfo.imageView = shadowMapImageArrayView;
-    shadowMapImageInfo.sampler = shadowMapImageSampler;
+    shadowMapImageInfo.sampler = Core::get().requestSampler(1);
 
     std::array<VkDescriptorImageInfo, 4> imagesInfo = { colorImageInfo, normalImageInfo, depthImageInfo, shadowMapImageInfo };
 
@@ -1952,7 +1936,7 @@ void RD_Vulkan::createDescriptorSets() {
       VkDescriptorImageInfo frameImageInfo = {};
       frameImageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
       frameImageInfo.imageView = frameMipchainImageView;
-      frameImageInfo.sampler = frameMipchainImageSampler;
+      frameImageInfo.sampler = Core::get().requestSampler(screenMipLevels);
 
       std::array<VkDescriptorImageInfo, 1> imagesInfo = { frameImageInfo };
 
@@ -1973,63 +1957,8 @@ VkDescriptorImageInfo RD_Vulkan::Texture::getDescriptor() const {
   VkDescriptorImageInfo imageInfo = {};
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   imageInfo.imageView = textureImageView;
-  imageInfo.sampler = textureSampler;
+  imageInfo.sampler = Core::get().requestSampler(mipLevels);
   return imageInfo;
-}
-
-void RD_Vulkan::Texture::createTextureSampler() {
-  VkSamplerCreateInfo samplerInfo = {};
-  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-  samplerInfo.magFilter = VK_FILTER_LINEAR;
-  samplerInfo.minFilter = VK_FILTER_LINEAR;
-  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.anisotropyEnable = VK_TRUE;
-  samplerInfo.maxAnisotropy = 16;
-  samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-  samplerInfo.unnormalizedCoordinates = VK_FALSE;
-  samplerInfo.compareEnable = VK_FALSE;
-  samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-  samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-  samplerInfo.mipLodBias = 0.0f;
-  samplerInfo.minLod = 0;
-  samplerInfo.maxLod = static_cast<float>(mipLevels);
-
-  VK_CHECK_RESULT(vkCreateSampler(deviceRef, &samplerInfo, nullptr, &textureSampler));
-}
-
-void RD_Vulkan::createColorSampler() {
-  VkSamplerCreateInfo samplerInfo = {};
-  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-  samplerInfo.magFilter = VK_FILTER_LINEAR;
-  samplerInfo.minFilter = VK_FILTER_LINEAR;
-  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.anisotropyEnable = VK_TRUE;
-  samplerInfo.maxAnisotropy = 16;
-  samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-  samplerInfo.unnormalizedCoordinates = VK_FALSE;
-  samplerInfo.compareEnable = VK_FALSE;
-  samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
-  samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-  samplerInfo.mipLodBias = 0.0f;
-  samplerInfo.minLod = 0;
-  samplerInfo.maxLod = 1;
-
-  VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &colorImageSampler));
-
-  VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &normalImageSampler));
-
-  VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &depthImageSampler));
-
-  VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &shadowMapImageSampler));
-
-  VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &frameImageSampler));
-
-  samplerInfo.maxLod = screenMipLevels;
-  VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &frameMipchainImageSampler));
 }
 
 void RD_Vulkan::createDefaultTexture() {
@@ -2096,8 +2025,6 @@ void RD_Vulkan::createColorResources() {
   frameMipchainImageView = BufferManager::get().createImageView(frameMipchainImage, frameFormat, VK_IMAGE_ASPECT_COLOR_BIT, screenMipLevels);
 
   BufferManager::get().transitionImageLayout(frameMipchainImage, frameFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, screenMipLevels, 1);
-
-  createColorSampler();
 }
 
 VkFormat RD_Vulkan::BufferManager::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
@@ -2163,7 +2090,6 @@ RD_Vulkan::RD_Vulkan()
 }
 
 RD_Vulkan::Texture::~Texture() {
-  vkDestroySampler(deviceRef, textureSampler, nullptr);
   vkDestroyImageView(deviceRef, textureImageView, nullptr);
 
   vkDestroyImage(deviceRef, textureImage, nullptr);
@@ -2173,6 +2099,7 @@ RD_Vulkan::Texture::~Texture() {
 RD_Vulkan::~RD_Vulkan()
 {
   vkDeviceWaitIdle(device);
+  Core::get().close();
   cleanupSwapChain();
 
   defaultTexture.reset();
